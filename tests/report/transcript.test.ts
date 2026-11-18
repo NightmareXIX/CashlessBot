@@ -62,6 +62,38 @@ describe('buildTranscriptLines', () => {
     expect(lines.map((l) => (l.kind === 'speech' ? l.text : ''))).toEqual(['hi', 'bye']);
   });
 
+  it('drops whitespace-only segments but keeps other text untouched', () => {
+    const lines = buildTranscriptLines(
+      meta({ segments: [seg('A', 0, 1000, ' \n\t '), seg('B', 2000, 3000, ' padded text ')] }),
+    );
+    expect(lines).toEqual([{ kind: 'speech', startMs: 2000, speakerName: 'B', text: ' padded text ' }]);
+  });
+
+  it('does not merge same-speaker segments when a failed-batch gap falls between them', () => {
+    const batches: BatchState[] = [{ id: 'b002', clipIds: ['c2'], status: 'failed' }];
+    const clips = [clip('c2', 5200, 600)];
+    const lines = buildTranscriptLines(
+      meta({ batches, clips, segments: [seg('A', 0, 5000, 'before'), seg('A', 6000, 8000, 'after')] }),
+    );
+    expect(lines).toEqual([
+      { kind: 'speech', startMs: 0, speakerName: 'A', text: 'before' },
+      { kind: 'gap', startMs: 5200, endMs: 5800 },
+      { kind: 'speech', startMs: 6000, speakerName: 'A', text: 'after' },
+    ]);
+  });
+
+  it('still merges when the failed-batch gap lies outside the pair', () => {
+    const batches: BatchState[] = [{ id: 'b002', clipIds: ['c2'], status: 'failed' }];
+    const clips = [clip('c2', 20_000, 1000)];
+    const lines = buildTranscriptLines(
+      meta({ batches, clips, segments: [seg('A', 0, 5000, 'one'), seg('A', 6000, 8000, 'two')] }),
+    );
+    expect(lines).toEqual([
+      { kind: 'speech', startMs: 0, speakerName: 'A', text: 'one two' },
+      { kind: 'gap', startMs: 20_000, endMs: 21_000 },
+    ]);
+  });
+
   it('sorts segments by startMs', () => {
     const lines = buildTranscriptLines(
       meta({ segments: [seg('B', 20_000, 21_000, 'second'), seg('A', 0, 1000, 'first')] }),
@@ -97,13 +129,6 @@ describe('renderTranscriptLines', () => {
       '[00:03:12] Rahim: text\n[00:12:30] [untranscribed audio 00:12:30–00:13:10]',
     );
   });
-
-  it('passes Bangla text through byte-for-byte', () => {
-    const bangla = 'আমরা আজকের মিটিং শুরু করছি। কাজটা কালকের মধ্যে শেষ করতে হবে।';
-    const out = renderTranscriptLines([{ kind: 'speech', startMs: 0, speakerName: 'রহিম', text: bangla }]);
-    expect(out).toBe(`[00:00:00] রহিম: ${bangla}`);
-    expect(Buffer.from(out, 'utf8').equals(Buffer.from(`[00:00:00] রহিম: ${bangla}`, 'utf8'))).toBe(true);
-  });
 });
 
 describe('renderTranscriptFile', () => {
@@ -122,6 +147,20 @@ describe('renderTranscriptFile', () => {
         '[00:12:30] [untranscribed audio 00:12:30–00:13:10]',
       ].join('\n'),
     );
+  });
+});
+
+describe('Bangla text', () => {
+  it('survives merging and rendering byte-for-byte', () => {
+    const first = 'আমরা কাল meeting করব';
+    const second = 'ঠিক আছে';
+    const lines = buildTranscriptLines(
+      meta({ segments: [seg('A', 0, 4000, first, 'রহিম'), seg('A', 5000, 7000, second, 'রহিম')] }),
+    );
+    const file = renderTranscriptFile(meta({ participants: { A: 'রহিম' } }), lines, 'Asia/Dhaka');
+    const expectedLine = '[00:00:00] রহিম: আমরা কাল meeting করব ঠিক আছে';
+    expect(file.split('\n').slice(4)).toEqual([expectedLine]);
+    expect(Buffer.from(file, 'utf8').includes(Buffer.from(expectedLine, 'utf8'))).toBe(true);
   });
 });
 

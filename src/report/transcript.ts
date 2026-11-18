@@ -10,25 +10,8 @@ export type TranscriptLine =
  * failed batches as gaps, all ordered by time.
  */
 export function buildTranscriptLines(meta: MeetingMeta, mergeGapMs = 3000): TranscriptLine[] {
-  const segments = meta.segments.filter((s) => s.text !== '').sort((a, b) => a.startMs - b.startMs);
-
-  const speech: TranscriptLine[] = [];
-  let lastUserId: string | undefined;
-  let lastEndMs = 0;
-  for (const seg of segments) {
-    const last = speech[speech.length - 1];
-    if (last?.kind === 'speech' && seg.userId === lastUserId && seg.startMs - lastEndMs <= mergeGapMs) {
-      last.text = `${last.text} ${seg.text}`;
-      lastEndMs = Math.max(lastEndMs, seg.endMs);
-    } else {
-      speech.push({ kind: 'speech', startMs: seg.startMs, speakerName: seg.speakerName, text: seg.text });
-      lastUserId = seg.userId;
-      lastEndMs = seg.endMs;
-    }
-  }
-
   const clipsById = new Map(meta.clips.map((c) => [c.id, c]));
-  const gaps: TranscriptLine[] = [];
+  const gaps: Extract<TranscriptLine, { kind: 'gap' }>[] = [];
   for (const batch of meta.batches) {
     if (batch.status !== 'failed') continue;
     const clips = batch.clipIds.flatMap((id) => clipsById.get(id) ?? []);
@@ -38,6 +21,29 @@ export function buildTranscriptLines(meta: MeetingMeta, mergeGapMs = 3000): Tran
       startMs: Math.min(...clips.map((c) => c.startMs)),
       endMs: Math.max(...clips.map((c) => c.startMs + c.durationMs)),
     });
+  }
+
+  const segments = meta.segments.filter((s) => s.text.trim() !== '').sort((a, b) => a.startMs - b.startMs);
+
+  const speech: TranscriptLine[] = [];
+  let lastUserId: string | undefined;
+  let lastEndMs = 0;
+  for (const seg of segments) {
+    const last = speech[speech.length - 1];
+    const gapBetween = gaps.some((g) => g.startMs >= lastEndMs && g.startMs < seg.startMs);
+    if (
+      last?.kind === 'speech' &&
+      seg.userId === lastUserId &&
+      seg.startMs - lastEndMs <= mergeGapMs &&
+      !gapBetween
+    ) {
+      last.text = `${last.text} ${seg.text}`;
+      lastEndMs = Math.max(lastEndMs, seg.endMs);
+    } else {
+      speech.push({ kind: 'speech', startMs: seg.startMs, speakerName: seg.speakerName, text: seg.text });
+      lastUserId = seg.userId;
+      lastEndMs = seg.endMs;
+    }
   }
 
   return [...speech, ...gaps].sort((a, b) => a.startMs - b.startMs);
