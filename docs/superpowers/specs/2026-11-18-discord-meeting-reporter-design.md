@@ -166,14 +166,18 @@ Overview
 
 ### Hosting and updates
 
-- **Host (my call): Oracle Cloud Always Free**, using an Ubuntu VM on the Ampere (ARM) shape.
-  - It's free forever within the limits, has plenty of RAM and disk, and allows 10 TB of outbound data a month, so uploading audio to Gemini costs nothing.
-  - Signing up needs a card for verification.
-  - Oracle can reclaim Always Free VMs it considers idle. To prevent that, upgrade the account to Pay-As-You-Go. That still costs $0 as long as usage stays within the Always Free limits.
-  - Alternative: a Google Cloud `e2-micro`. Its 1 GB/month free outbound data is close to what a month of daily audio uploads needs, so it's second choice.
-- **Process:** the bot runs as a `systemd` service on the VM. It starts on boot and restarts if it crashes. Secrets live in `.env` on the VM, never in git.
-- **Updates:** the code lives in a private GitHub repository. Deploying means running `scripts/deploy.sh` on the VM, which does `git pull`, `npm ci`, a build, and restarts the service. The bot **registers its slash commands automatically on startup**, so new or changed commands appear without the admin doing anything.
-- **What needs the admin again:** only a change to the bot's server **permissions**, which needs a new invite link or a role edit. Code changes, new commands, and model changes never do.
+- **Constraint (decided by the user):** no credit or debit card, not a student, and no spare device. That rules out Oracle, Google Cloud, Koyeb, Fly.io and Azure for Students.
+- **Host (my call): Northflank free Sandbox.**
+  - It needs no card and its services don't sleep.
+  - The bot runs as a Docker container, built from the repo's `Dockerfile`.
+  - Secrets are set as Northflank environment variables, never in git.
+  - **Risk:** it is unverified whether outbound UDP, which Discord voice needs, works there. The first deploy is the test: `/join`, speak, then check that clips are recorded.
+- **Fallbacks, in order:**
+  1. bot-hosting.net free plan (Pterodactyl panel, manual renewal every 4 days, UDP also unverified).
+  2. Running on the user's own PC with `npm start`. It is online only while the PC is on.
+- **Disk:** the container disk may be ephemeral. Recordings survive until the next restart or deploy, which is enough because a meeting is processed within minutes. `/retry` only works for meetings recorded since the last restart.
+- **Updates:** Northflank builds and redeploys automatically on every push to `main`. Merging a PR is the deploy. The bot **registers its slash commands automatically on startup**, so new or changed commands appear without the admin doing anything.
+- **What needs the admin again:** only a change to the bot's server **permissions**, which needs a new invite link or a role edit. Code changes, new commands and model changes never do.
 
 ### Testing
 
