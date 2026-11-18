@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -114,12 +114,11 @@ describe('SessionManager', () => {
     expect(connect).toHaveBeenCalledTimes(1);
   });
 
-  it('on a failed connect, ends the meeting, frees the guild and rethrows', async () => {
+  it('on a failed connect, removes the meeting, frees the guild and rethrows', async () => {
     connect.mockRejectedValueOnce(new Error('join timed out'));
     await expect(start()).rejects.toThrow('join timed out');
     expect(manager.get(G)).toBeUndefined();
-    const [meta] = await store.list();
-    expect(meta).toMatchObject({ endedAt: '2026-03-04T05:06:07.000Z', stopReason: 'disconnected' });
+    expect(await readdir(root)).toEqual([]);
     expect(onStopped).not.toHaveBeenCalled();
 
     await startOk();

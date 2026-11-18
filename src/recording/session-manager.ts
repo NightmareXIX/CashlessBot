@@ -57,10 +57,7 @@ export class SessionManager {
       try {
         connection = await this.deps.connect(guildId, voiceChannelId);
       } catch (err) {
-        await this.deps.store.update(meta.id, (m) => {
-          m.endedAt = m.startedAt;
-          m.stopReason = 'disconnected';
-        });
+        await this.deps.store.remove(meta.id); // nothing was recorded, so leave nothing for /retry
         throw err;
       }
 

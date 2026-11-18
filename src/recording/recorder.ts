@@ -9,6 +9,8 @@ import type { MeetingMeta } from '../types.js';
 export const CLIP_SILENCE_MS = 1000;
 /** Utterances shorter than this many packets (25 × 20 ms = 0.5 s) are dropped. */
 export const MIN_CLIP_PACKETS = 25;
+/** Speaker name used when the name lookup fails, so the clip is still kept. */
+export const UNKNOWN_SPEAKER = 'Unknown speaker';
 
 /** The parts of @discordjs/voice's VoiceReceiver the recorder uses. */
 export interface VoiceReceiverLike {
@@ -33,11 +35,10 @@ export interface MeetingRecorderDeps {
 /** Records each speaker's utterances in a meeting as separate Ogg/Opus clips. */
 export class MeetingRecorder {
   private stopping = false;
-  /** Users with a capture in progress, from their speaking start until their stream closes. */
-  private readonly capturing = new Set<string>();
   private readonly streams = new Set<Readable>();
   private readonly pending = new Set<Promise<void>>();
-  private readonly botCache = new Map<string, boolean>();
+  /** Users found to be bots; they are ignored without subscribing. */
+  private readonly knownBots = new Set<string>();
   private readonly startedAtMs: number;
   private readonly now: () => number;
 
@@ -63,31 +64,28 @@ export class MeetingRecorder {
   }
 
   private readonly onSpeakingStart = (userId: string): void => {
-    if (this.stopping || this.capturing.has(userId) || this.receiver.subscriptions.has(userId)) return;
-    this.capturing.add(userId);
-    const task = this.capture(userId, this.now() - this.startedAtMs)
-      .catch((err: unknown) => console.error(`Recording clip for user ${userId} in meeting ${this.meta.id} failed:`, err))
-      .finally(() => {
-        this.capturing.delete(userId);
-        this.pending.delete(task);
-      });
-    this.pending.add(task);
-  };
-
-  private async capture(userId: string, startMs: number): Promise<void> {
-    if (await this.isBot(userId)) return;
-    if (this.stopping) return;
-
+    if (this.stopping || this.knownBots.has(userId) || this.receiver.subscriptions.has(userId)) return;
+    // Subscribe at once so no packet is lost while the speaker is looked up.
     const stream = this.receiver.subscribe(userId, {
       end: { behavior: EndBehaviorType.AfterSilence, duration: CLIP_SILENCE_MS },
     });
+    const task = this.capture(userId, this.now() - this.startedAtMs, stream)
+      .catch((err: unknown) => console.error(`Recording clip for user ${userId} in meeting ${this.meta.id} failed:`, err))
+      .finally(() => this.pending.delete(task));
+    this.pending.add(task);
+  };
+
+  private async capture(userId: string, startMs: number, stream: Readable): Promise<void> {
     this.streams.add(stream);
+    const lookup = this.lookUpSpeaker(userId).then((speaker) => {
+      if (speaker.isBot) stream.destroy(); // stop buffering a bot's audio right away
+      return speaker;
+    });
     const packets = await collectPackets(stream, userId);
     this.streams.delete(stream);
-    this.capturing.delete(userId);
+    const speaker = await lookup;
 
-    if (packets.length < MIN_CLIP_PACKETS) return;
-    const speaker = await this.deps.resolveSpeaker(userId);
+    if (speaker.isBot || packets.length < MIN_CLIP_PACKETS) return;
     const data = await encodeOggOpus(packets);
     await this.deps.store.writeClip(
       this.meta.id,
@@ -96,12 +94,16 @@ export class MeetingRecorder {
     );
   }
 
-  private async isBot(userId: string): Promise<boolean> {
-    const cached = this.botCache.get(userId);
-    if (cached !== undefined) return cached;
-    const { isBot } = await this.deps.resolveSpeaker(userId);
-    this.botCache.set(userId, isBot);
-    return isBot;
+  /** Resolves the speaker; on failure logs a warning and treats them as a human named UNKNOWN_SPEAKER. */
+  private async lookUpSpeaker(userId: string): Promise<Speaker> {
+    try {
+      const speaker = await this.deps.resolveSpeaker(userId);
+      if (speaker.isBot) this.knownBots.add(userId);
+      return speaker;
+    } catch (err) {
+      console.warn(`Could not look up speaker ${userId} in meeting ${this.meta.id}; using "${UNKNOWN_SPEAKER}":`, err);
+      return { name: UNKNOWN_SPEAKER, isBot: false };
+    }
   }
 }
 

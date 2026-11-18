@@ -110,15 +110,52 @@ describe('MeetingRecorder', () => {
     expect((await store.load(meta.id)).clips).toEqual([]);
   });
 
-  it('ignores bot users and caches the bot check', async () => {
+  it('keeps every packet of a first utterance even when the speaker lookup is slow', async () => {
+    let finishLookup!: (s: { name: string; isBot: boolean }) => void;
+    resolveSpeaker.mockImplementationOnce(() => new Promise((r) => (finishLookup = r)));
+
+    receiver.speaking.emit('start', 'u1');
+    expect(receiver.subscribe).toHaveBeenCalledTimes(1); // subscribed before the lookup resolves
+    const stream = receiver.subscriptions.get('u1')!;
+    for (const p of packets(30)) stream.write(p);
+    stream.end();
+    await new Promise((r) => setImmediate(r));
+    finishLookup({ name: 'Rahim', isBot: false });
+
+    const saved = await waitForClips(1);
+    expect(saved.clips[0]).toMatchObject({ userId: 'u1', speakerName: 'Rahim', durationMs: 600 });
+    expect(await decodeOggOpusPackets(await store.readClip(meta.id, saved.clips[0]!))).toEqual(packets(30));
+  });
+
+  it("discards a bot's audio, ends its stream, and then ignores the bot without a lookup", async () => {
+    let finishLookup!: (s: { name: string; isBot: boolean }) => void;
+    resolveSpeaker.mockImplementationOnce(() => new Promise((r) => (finishLookup = r)));
     receiver.speaking.emit('start', 'bot');
-    await vi.waitFor(() => expect(resolveSpeaker).toHaveBeenCalledWith('bot'));
-    await new Promise((r) => setImmediate(r)); // let the first check finish
+    const stream = receiver.subscriptions.get('bot')!;
+    for (const p of packets(30)) stream.write(p);
+
+    finishLookup({ name: 'Music Bot', isBot: true });
+    await vi.waitFor(() => expect(stream.destroyed).toBe(true));
     receiver.speaking.emit('start', 'bot');
     await recorder.stop();
 
-    expect(receiver.subscribe).not.toHaveBeenCalled();
+    expect(receiver.subscribe).toHaveBeenCalledTimes(1);
     expect(resolveSpeaker).toHaveBeenCalledTimes(1);
+    expect((await store.load(meta.id)).clips).toEqual([]);
+  });
+
+  it('writes the clip as "Unknown speaker" with a warning when the lookup fails, and looks up again next time', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    resolveSpeaker.mockRejectedValueOnce(new Error('member fetch failed'));
+
+    await speak('u1', 30);
+    await waitForClips(1);
+    await speak('u1', 30);
+
+    const saved = await waitForClips(2);
+    expect(saved.clips.map((c) => c.speakerName)).toEqual(['Unknown speaker', 'Rahim']);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0])).toContain('member fetch failed');
   });
 
   it('subscribes only once when start fires again while the user is subscribed', async () => {

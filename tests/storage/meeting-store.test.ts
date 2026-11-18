@@ -187,6 +187,16 @@ describe('MeetingStore', () => {
     const b = await store.create(init({ startedAt: new Date('2026-03-02T00:00:00Z') }));
     expect((await store.list()).map((m) => m.id).sort()).toEqual([a.id, b.id].sort());
   });
+
+  it('remove deletes a meeting folder with its clips and leaves other meetings', async () => {
+    const a = await store.create(init({ startedAt: new Date('2026-03-01T00:00:00Z') }));
+    const b = await store.create(init({ startedAt: new Date('2026-03-02T00:00:00Z') }));
+    await store.writeClip(a.id, clipInput(), Buffer.from('audio'));
+
+    await store.remove(a.id);
+
+    expect(await readdir(root)).toEqual([b.id]);
+  });
 });
 
 describe('isFinished', () => {
