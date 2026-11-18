@@ -30,7 +30,8 @@ export function buildTranscriptLines(meta: MeetingMeta, mergeGapMs = 3000): Tran
   let lastEndMs = 0;
   for (const seg of segments) {
     const last = speech[speech.length - 1];
-    const gapBetween = gaps.some((g) => g.startMs >= lastEndMs && g.startMs < seg.startMs);
+    // A gap sorts between the pair if it starts after the earlier line starts (even while it is still in progress).
+    const gapBetween = last !== undefined && gaps.some((g) => g.startMs >= last.startMs && g.startMs < seg.startMs);
     if (
       last?.kind === 'speech' &&
       seg.userId === lastUserId &&

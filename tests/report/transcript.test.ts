@@ -82,6 +82,19 @@ describe('buildTranscriptLines', () => {
     ]);
   });
 
+  it('does not merge when a gap starts while the earlier segment is still in progress', () => {
+    const batches: BatchState[] = [{ id: 'b002', clipIds: ['c2'], status: 'failed' }];
+    const clips = [{ ...clip('c2', 4500, 4500), userId: 'B' }]; // gap 4500-9000, another user's clip
+    const lines = buildTranscriptLines(
+      meta({ batches, clips, segments: [seg('A', 0, 5000, 'before'), seg('A', 6000, 8000, 'after')] }),
+    );
+    expect(lines).toEqual([
+      { kind: 'speech', startMs: 0, speakerName: 'A', text: 'before' },
+      { kind: 'gap', startMs: 4500, endMs: 9000 },
+      { kind: 'speech', startMs: 6000, speakerName: 'A', text: 'after' },
+    ]);
+  });
+
   it('still merges when the failed-batch gap lies outside the pair', () => {
     const batches: BatchState[] = [{ id: 'b002', clipIds: ['c2'], status: 'failed' }];
     const clips = [clip('c2', 20_000, 1000)];
