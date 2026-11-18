@@ -99,7 +99,7 @@ async function main(): Promise<void> {
     connect: async (guildId, channelId) => connectToVoice(await client.guilds.fetch(guildId), channelId),
     resolveSpeaker: (guildId, userId) =>
       resolveSpeaker(userId, {
-        fetchMember: async (id) => (await client.guilds.fetch(guildId)).members.fetch(id),
+        fetchMember: async (options) => (await client.guilds.fetch(guildId)).members.fetch(options),
         fetchUser: (id) => client.users.fetch(id),
       }),
     onStopped: (meetingId, reason) => {

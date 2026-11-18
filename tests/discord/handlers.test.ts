@@ -82,10 +82,10 @@ describe('fixed copy', () => {
     );
     expect(processingText('rc1')).toBe('⏳ Processing the meeting… the report will be posted in <#rc1>.');
     expect(processingInterruptedText).toBe(
-      '⚠️ Processing of a meeting was interrupted by a bot restart. Run /retry to finish it.',
+      '⚠️ Processing of a meeting was interrupted by a bot restart. Run /retry to process what was recorded (if the bot was redeployed, the audio may be gone).',
     );
     expect(interruptedText).toBe(
-      '⚠️ A recording was cut off by a bot restart. Run /retry to process what was recorded.',
+      '⚠️ A recording was cut off by a bot restart. Run /retry to process what was recorded (if the bot was redeployed, the audio may be gone).',
     );
   });
 
@@ -118,24 +118,25 @@ describe('countHumans', () => {
 });
 
 describe('resolveSpeaker', () => {
-  it('uses the guild member display name and bot flag', async () => {
+  it('uses the guild member display name and bot flag, bypassing the member cache', async () => {
+    const fetchMember = vi.fn(async () => ({ displayName: 'Nick', user: { bot: false } }));
     const fetchUser = vi.fn();
-    const speaker = await resolveSpeaker('u1', {
-      fetchMember: async () => ({ displayName: 'Nick', user: { bot: false } }),
-      fetchUser,
-    });
+    const speaker = await resolveSpeaker('u1', { fetchMember, fetchUser });
     expect(speaker).toEqual({ name: 'Nick', isBot: false });
+    // The cache doesn't follow nickname changes without the GuildMembers intent, so force a fresh fetch.
+    expect(fetchMember).toHaveBeenCalledExactlyOnceWith({ user: 'u1', force: true });
     expect(fetchUser).not.toHaveBeenCalled();
   });
 
   it('falls back to the global user when the member left the server', async () => {
-    const speaker = await resolveSpeaker('u1', {
-      fetchMember: async () => {
-        throw new Error('Unknown Member');
-      },
-      fetchUser: async () => ({ globalName: 'Global', username: 'user1', bot: false }),
+    const fetchMember = vi.fn(async () => {
+      throw new Error('Unknown Member');
     });
+    const fetchUser = vi.fn(async () => ({ globalName: 'Global', username: 'user1', bot: false }));
+    const speaker = await resolveSpeaker('u1', { fetchMember, fetchUser });
     expect(speaker).toEqual({ name: 'Global', isBot: false });
+    expect(fetchMember).toHaveBeenCalledExactlyOnceWith({ user: 'u1', force: true });
+    expect(fetchUser).toHaveBeenCalledExactlyOnceWith('u1');
   });
 
   it('uses the username when the user has no global name', async () => {

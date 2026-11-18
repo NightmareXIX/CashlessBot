@@ -18,8 +18,13 @@ describe('planBatches', () => {
     expect(batches.every((b) => b.status === 'pending')).toBe(true);
   });
 
+  it('keeps batches at 12 MB, so they stay under the inline request limit once base64-encoded', () => {
+    expect(BATCH_LIMITS.maxBytes).toBe(12 * 1024 * 1024);
+  });
+
   it('splits when the byte limit would be exceeded', () => {
-    const big = new Map(twelve.map((c) => [c.id, 6 * 1024 * 1024]));
+    // Three 5 MB clips (15 MB) would exceed the limit, so each batch holds two.
+    const big = new Map(twelve.map((c) => [c.id, 5 * 1024 * 1024]));
     const batches = planBatches(twelve, big);
     expect(batches.map((b) => b.clipIds.length)).toEqual(Array(6).fill(2));
   });

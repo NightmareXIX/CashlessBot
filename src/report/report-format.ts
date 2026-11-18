@@ -34,7 +34,8 @@ export function buildErrorText(meta: MeetingMeta, what: string, timezone: string
   const start = new Date(meta.startedAt);
   return (
     `❌ Processing failed for the meeting in #${meta.voiceChannelName} ` +
-    `(${formatDate(start, timezone)}, ${formatTime(start, timezone)}): ${what}. Run /retry to try again.`
+    `(${formatDate(start, timezone)}, ${formatTime(start, timezone)}): ${what}. ` +
+    `Run /retry to try again (meeting \`${meta.id}\`).`
   );
 }
 
@@ -135,7 +136,8 @@ function chunkDescription(text: string, max: number): string[] {
   return chunks;
 }
 
-const embedSize = (embed: APIEmbed) => (embed.title?.length ?? 0) + (embed.description?.length ?? 0);
+const embedSize = (embed: APIEmbed) =>
+  (embed.title?.length ?? 0) + (embed.description?.length ?? 0) + (embed.footer?.text.length ?? 0);
 
 export function buildReportMessages(input: ReportInput): ReportMessage[] {
   const title = buildTitle(input.meta, input.timezone, input.updated ?? false);
@@ -145,6 +147,8 @@ export function buildReportMessages(input: ReportInput): ReportMessage[] {
     ...(i === 0 ? { title } : {}),
     description,
     color: EMBED_COLOR,
+    // So /retry meeting_id can be given without digging through the server's files.
+    ...(i === 0 ? { footer: { text: `Meeting ID: ${input.meta.id}` } } : {}),
   }));
 
   const groups: APIEmbed[][] = [];

@@ -15,9 +15,11 @@ export const recordingNoticeText = (vcId: string, userId: string) =>
   `🔴 Recording started in <#${vcId}> by <@${userId}>. Everything said there will be transcribed and summarized.`;
 export const processingText = (reportChannelId: string) =>
   `⏳ Processing the meeting… the report will be posted in <#${reportChannelId}>.`;
-export const interruptedText = '⚠️ A recording was cut off by a bot restart. Run /retry to process what was recorded.';
+// The hosting disk is ephemeral, so after a redeploy the saved audio may no longer exist.
+export const interruptedText =
+  '⚠️ A recording was cut off by a bot restart. Run /retry to process what was recorded (if the bot was redeployed, the audio may be gone).';
 export const processingInterruptedText =
-  '⚠️ Processing of a meeting was interrupted by a bot restart. Run /retry to finish it.';
+  '⚠️ Processing of a meeting was interrupted by a bot restart. Run /retry to process what was recorded (if the bot was redeployed, the audio may be gone).';
 
 // ---- Copy added for error paths ----
 
@@ -81,17 +83,19 @@ export function countHumans(members: Iterable<{ user: { bot: boolean } }>): numb
 }
 
 export interface SpeakerLookups {
-  fetchMember(userId: string): Promise<{ displayName: string; user: { bot: boolean } }>;
+  /** Like `guild.members.fetch(options)`. */
+  fetchMember(options: { user: string; force: boolean }): Promise<{ displayName: string; user: { bot: boolean } }>;
   fetchUser(userId: string): Promise<{ globalName: string | null; username: string; bot: boolean }>;
 }
 
 /**
- * Resolves a speaker's display name. Members who left the server can't be fetched as members,
- * so this falls back to their global user. Throws only when both lookups fail.
+ * Resolves a speaker's display name. The member is always fetched fresh: without the
+ * GuildMembers intent the cache misses nickname changes. Members who left the server can't
+ * be fetched as members, so this falls back to their global user. Throws only when both lookups fail.
  */
 export async function resolveSpeaker(userId: string, lookups: SpeakerLookups): Promise<Speaker> {
   try {
-    const member = await lookups.fetchMember(userId);
+    const member = await lookups.fetchMember({ user: userId, force: true });
     return { name: member.displayName, isBot: member.user.bot };
   } catch {
     const user = await lookups.fetchUser(userId);
