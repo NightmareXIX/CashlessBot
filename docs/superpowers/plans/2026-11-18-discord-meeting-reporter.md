@@ -20,7 +20,7 @@
 
 ## Global Constraints
 
-- **Cost:** $0 to run. Only free tiers (Gemini, Groq) and free hosting (Oracle Cloud Always Free).
+- **Cost:** $0 to run. Only free tiers (Gemini, Groq) and free hosting (Northflank Sandbox; no card).
 - **Voice library:** `@discordjs/voice` must be `^0.19.2`, the version that bundles DAVE support. Join with `selfDeaf: false` (required to receive audio) and `selfMute: true`.
 - **No ffmpeg anywhere.** Audio stays Ogg/Opus, read and written with `prism-media`.
 - **Intents:** `Guilds`, `GuildVoiceStates` only. Bot permissions: View Channel, Connect, Send Messages, Embed Links, Attach Files (permissions integer `1100800`).
@@ -85,8 +85,7 @@ CashlessBot/
 │   ├── pipeline/process-meeting.ts  # (T10)
 │   └── discord/commands.ts, register-commands.ts, report-poster.ts, handlers.ts       # (T11)
 ├── tests/                           # mirrors src/, e.g. tests/storage/meeting-store.test.ts
-├── deploy/cashlessbot.service       # (T8)
-├── scripts/deploy.sh                # (T8)
+├── Dockerfile, .dockerignore        # (T8)
 ├── docs/setup.md, docs/deploy.md    # (T8)
 ├── docs/superpowers/{specs,plans}/
 ├── .env.example, .gitignore, README.md (T11)
@@ -98,8 +97,8 @@ CashlessBot/
 | Wave | Tasks (parallel within a wave) | Depends on |
 |---|---|---|
 | 0 | T1 Foundation | — |
-| 1 | T2 Storage · T3 Ogg · T4 Batching and transcript · T5 Report format · T6 Transcribers · T7 Summarizers · T8 Deploy and docs | T1 merged |
-| 2 | T9 Recording · T10 Pipeline | all of wave 1 merged |
+| 1 | T2 Storage · T3 Ogg · T4 Batching and transcript · T5 Report format · T6 Transcribers · T7 Summarizers | T1 merged |
+| 2 | T9 Recording · T10 Pipeline · T8 Container and docs | all of wave 1 merged |
 | 3 | T11 Discord wiring | wave 2 merged |
 | 4 | T12 End-to-end check and deploy (with the user) | T11 merged |
 
@@ -566,47 +565,51 @@ Transcript:
 
 ---
 
-### Task 8: Deployment files and setup docs (wave 1)
+### Task 8: Container, hosting and setup docs (wave 2, parallel)
 
-Branch: `docs/t08-deploy`.
+Branch: `docs/t08-deploy`. The spec section "Hosting and updates" is the authority.
 
 **Files:**
-- Create: `deploy/cashlessbot.service`, `scripts/deploy.sh`, `docs/setup.md`, `docs/deploy.md`
+- Create: `Dockerfile`, `.dockerignore`, `docs/setup.md`, `docs/deploy.md`
 
 **Contents:**
-- `deploy/cashlessbot.service` (systemd):
-  - `User=ubuntu`, `WorkingDirectory=/home/ubuntu/CashlessBot`
-  - `ExecStart=/usr/bin/node dist/index.js`
-  - `Restart=always`, `RestartSec=5`, `Environment=NODE_ENV=production`
-  - `After=network-online.target`, `WantedBy=multi-user.target`
-- `scripts/deploy.sh`: `set -euo pipefail`, cd to the repo root, then run `git pull --ff-only`, `npm ci`, `npm run build`, `sudo systemctl restart cashlessbot`, and `systemctl --no-pager --lines=20 status cashlessbot`. Make it executable.
-- `docs/setup.md`, a step-by-step guide covering:
-  1. Creating the Discord application and bot, and copying the token and client ID. No privileged intents are needed.
-  2. Getting a Gemini API key from Google AI Studio and checking the current free Flash model ID.
-  3. Optionally, getting a Groq API key and checking the model IDs with `curl https://api.groq.com/openai/v1/models`.
-  4. Setting up a personal **test server**.
-  5. **A message to send the server admin**, ready to paste, including:
+- `Dockerfile`, multi-stage, based on `node:22-bookworm-slim`. It must be glibc, because `@snazzah/davey` ships glibc prebuilt binaries.
+  - Build stage: `npm ci`, then `npm run build`.
+  - Runtime stage: `npm ci --omit=dev`, copy `dist/`, set `ENV NODE_ENV=production`, run `USER node`, and set `CMD ["node", "dist/index.js"]`.
+  - No `EXPOSE`. The bot serves no HTTP.
+- `.dockerignore`: `node_modules`, `dist`, `.env`, `recordings`, `.git`, `.superpowers`, `coverage`, `*.log`.
+- `docs/setup.md`, step by step:
+  1. Create the Discord application and bot. Copy the token and client ID. No privileged intents.
+  2. Get a Gemini API key from Google AI Studio, and check the current free Flash model ID.
+  3. Optionally get a Groq API key. Check the model IDs with `curl https://api.groq.com/openai/v1/models`.
+  4. Set up a personal test server.
+  5. Write a **ready-to-paste message for the server admin**. It contains:
      - the invite URL `https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&scope=bot%20applications.commands&permissions=1100800`
-     - what the bot does, that it announces when it's recording, the exact permissions and why it needs each one
-     - a note that private channels need the bot role added
+     - what the bot does, and that it announces when it's recording
+     - the exact permissions and why it needs each one
+     - that private channels need the bot's role added
      - that commands can be restricted under Server Settings → Integrations
-  6. Getting server and channel IDs with Developer Mode, and filling in `REPORT_CHANNELS`.
-  7. Running locally with `npm run dev`.
-- `docs/deploy.md`, the Oracle Cloud Always Free guide:
-  - creating an Ubuntu VM on the Ampere A1 shape, and SSH access
-  - upgrading to Pay-As-You-Go to avoid idle reclaim, which still costs $0 within the Always Free limits
-  - installing Node 22 or later with NodeSource
-  - `git clone` with a GitHub deploy key (read-only)
-  - creating `.env`, then `npm ci && npm run build`
-  - installing the service: `sudo cp deploy/cashlessbot.service /etc/systemd/system/ && sudo systemctl enable --now cashlessbot`
-  - checking logs with `journalctl -u cashlessbot -f`
-  - **updating:** `git push` on your machine, then `./scripts/deploy.sh` on the VM
-  - that only permission changes ever need the admin again
-  - the Google Cloud `e2-micro` alternative and its 1 GB/month outbound data caveat
+  6. Get server and channel IDs with Developer Mode, and fill in `REPORT_CHANNELS`.
+  7. Run locally with `cp .env.example .env`, `npm ci`, `npm run dev`. This is also fallback 2, running on your own PC: `npm run build && npm start`.
+- `docs/deploy.md`:
+  - Northflank Sandbox: sign up with GitHub, no card needed.
+  - Create a project, then a **combined service** from the GitHub repo `NightmareXIX/CashlessBot`, branch `main`, build type Dockerfile.
+  - Remove every port, because there's no HTTP.
+  - Add every `.env.example` variable as a runtime secret or environment variable.
+  - Use the smallest free instance. Turn on **auto-deploy on push to main**.
+  - Watch the logs for `Ready as …`.
+  - **UDP check:** in the test server, run `/join`, talk for 30 s, then `/stop`. A report means voice works. If voice never connects, or no clips are recorded, outbound UDP is blocked; move to a fallback.
+  - Fallback 1: bot-hosting.net. Upload the repo or `git clone` it, set the start command to `npm ci && npm run build && node dist/index.js`, set env vars in the panel, and renew every 4 days.
+  - Fallback 2: your own PC.
+  - **Updating:** merge a PR into `main`, and Northflank redeploys. Only permission changes ever need the admin.
+  - **Ephemeral disk note:** `/retry` only covers meetings recorded since the last restart.
 
 - [ ] **Step 1: Write the files.**
-- [ ] **Step 2: Verify.** Run `bash -n scripts/deploy.sh` (expected: no output) and `grep -c "1100800" docs/setup.md` (expected: 1 or more).
-- [ ] **Step 3: Commit** `build(deploy): add systemd unit and deploy script`, then `docs: add setup and Oracle Cloud deploy guides`.
+- [ ] **Step 2: Verify.**
+  - Run `grep -c "1100800" docs/setup.md`. Expected: ≥ 1.
+  - Run `grep -E "^FROM node:22-bookworm-slim" -c Dockerfile`. Expected: 2.
+  - If `docker` is available, run `docker build -t cashlessbot .`. Expected: success. Otherwise note that it was skipped in the report.
+- [ ] **Step 3: Commit** `build(docker): add container image for hosting`, then `docs: add setup and Northflank deploy guides`.
 
 ---
 
