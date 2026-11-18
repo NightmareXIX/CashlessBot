@@ -98,6 +98,15 @@ export async function processMeeting(meetingId: string, deps: ProcessMeetingDeps
     m.steps.transcribe = hasGaps ? 'failed' : 'done';
   });
 
+  // Only noise was recorded: summarizing an empty transcript would invite made-up content.
+  if (!hasGaps && meta.segments.every((s) => s.text.trim() === '')) {
+    await postOrFail(store, meetingId, () => poster.postText(meta.guildId, NO_SPEECH_TEXT));
+    return store.update(meetingId, (m) => {
+      m.steps = { transcribe: 'done', summarize: 'done', report: 'done' };
+      m.reportComplete = true;
+    });
+  }
+
   let summaryFailedAgain = false;
   if (!meta.summary || meta.steps.summarize !== 'done') {
     const transcript = renderTranscriptLines(buildTranscriptLines(meta));

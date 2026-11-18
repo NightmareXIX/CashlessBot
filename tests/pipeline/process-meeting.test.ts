@@ -199,6 +199,45 @@ describe('processMeeting', () => {
     expect(await store.load(id)).toEqual(result);
   });
 
+  it('posts the no-speech text and skips the summary when every clip transcribes to nothing', async () => {
+    const id = await recordMeeting();
+    const poster = fakePoster();
+    const silent: Transcriber = {
+      name: 'gemini',
+      transcribe: vi.fn(async (inputs: AudioInput[]) => new Map(inputs.map((i, n) => [i.id, n === 0 ? '' : '  \n ']))),
+    };
+    const sum = summarizer('gemini');
+
+    const result = await processMeeting(id, deps({ poster, primary: silent, summarizer: sum }));
+
+    expect(silent.transcribe).toHaveBeenCalledTimes(2);
+    expect(sum.summarize).not.toHaveBeenCalled();
+    expect(poster.texts).toEqual([{ guildId: GUILD, text: NO_SPEECH_TEXT }]);
+    expect(poster.posts).toEqual([]);
+    expect(result.steps).toEqual({ transcribe: 'done', summarize: 'done', report: 'done' });
+    expect(result.reportComplete).toBe(true);
+    expect(await store.load(id)).toEqual(result);
+  });
+
+  it('still reports a gap rather than no speech when the transcribed clips are blank but a batch failed', async () => {
+    const id = await recordMeeting();
+    const poster = fakePoster();
+    const blankOrDown: Transcriber = {
+      name: 'gemini',
+      transcribe: vi.fn(async (inputs: AudioInput[]) => {
+        if (inputs.some((i) => i.id === 'c0002')) throw new ProviderError('gemini down', { status: 503 });
+        return new Map(inputs.map((i) => [i.id, '']));
+      }),
+    };
+
+    const result = await processMeeting(id, deps({ poster, primary: blankOrDown }));
+
+    expect(poster.texts).toEqual([]);
+    expect(poster.posts).toHaveLength(1);
+    expect(description(poster.posts[0]!.messages)).toContain(NOTE_GAPS);
+    expect(result.reportComplete).toBe(false);
+  });
+
   it('posts the transcript with a note when the summary fails, then a reply once a retry succeeds', async () => {
     const id = await recordMeeting();
     const poster = fakePoster();
