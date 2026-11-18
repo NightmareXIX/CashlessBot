@@ -82,10 +82,10 @@ describe('fixed copy', () => {
     );
     expect(processingText('rc1')).toBe('⏳ Processing the meeting… the report will be posted in <#rc1>.');
     expect(processingInterruptedText).toBe(
-      '⚠️ Processing of a meeting was interrupted by a bot restart. Run /retry to finish it.',
+      '⚠️ Processing of a meeting was interrupted by a bot restart. Run /retry to process what was recorded (if the bot was redeployed, the audio may be gone).',
     );
     expect(interruptedText).toBe(
-      '⚠️ A recording was cut off by a bot restart. Run /retry to process what was recorded.',
+      '⚠️ A recording was cut off by a bot restart. Run /retry to process what was recorded (if the bot was redeployed, the audio may be gone).',
     );
   });
 
