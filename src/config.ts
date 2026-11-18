@@ -58,6 +58,13 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   }
   const e = parsed.data;
 
+  // A bad time zone would otherwise only surface as a RangeError when the first report is formatted.
+  try {
+    new Intl.DateTimeFormat(undefined, { timeZone: e.TIMEZONE });
+  } catch {
+    throw new Error(`Invalid configuration: TIMEZONE "${e.TIMEZONE}" is not a valid time zone (e.g. Asia/Dhaka)`);
+  }
+
   if (e.TRANSCRIBER === 'groq' && !e.GROQ_API_KEY) {
     throw new Error('Invalid configuration: GROQ_API_KEY is required when TRANSCRIBER=groq');
   }

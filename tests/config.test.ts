@@ -70,6 +70,16 @@ describe('loadConfig', () => {
     expect(loadConfig(base).groq).toBeUndefined();
   });
 
+  it('throws a clear error naming TIMEZONE when it is not a valid IANA time zone', () => {
+    expect(() => loadConfig({ ...base, TIMEZONE: 'Asia/Dhakka' })).toThrow(
+      'Invalid configuration: TIMEZONE "Asia/Dhakka" is not a valid time zone (e.g. Asia/Dhaka)',
+    );
+  });
+
+  it('accepts any valid IANA time zone', () => {
+    expect(loadConfig({ ...base, TIMEZONE: 'America/New_York' }).timezone).toBe('America/New_York');
+  });
+
   it('throws on a malformed REPORT_CHANNELS pair', () => {
     expect(() => loadConfig({ ...base, REPORT_CHANNELS: 'g1' })).toThrow(/REPORT_CHANNELS/);
   });
