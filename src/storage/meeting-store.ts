@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { ClipMeta, MeetingMeta } from '../types.js';
 
@@ -99,6 +99,11 @@ export class MeetingStore {
       await this.save(meta);
       return full;
     });
+  }
+
+  /** Deletes a meeting's folder (meta.json and clips). */
+  async remove(id: string): Promise<void> {
+    await rm(this.meetingDir(id), { recursive: true, force: true });
   }
 
   readClip(id: string, clip: ClipMeta): Promise<Buffer> {
