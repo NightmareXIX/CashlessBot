@@ -23,7 +23,7 @@ const EnvSchema = z.object({
   REPORT_CHANNELS: optional,
   TIMEZONE: optional.default('Asia/Dhaka'),
   RECORDINGS_DIR: optional.default('./recordings'),
-  GEMINI_MODEL: optional.default('gemini-flash-latest'),
+  GEMINI_MODEL: optional.default('gemini-3.5-flash'),
   GROQ_API_KEY: optional,
   GROQ_MODEL: optional.default('whisper-large-v3'),
   GROQ_SUMMARY_MODEL: optional.default('openai/gpt-oss-120b'),

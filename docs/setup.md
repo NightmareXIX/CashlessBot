@@ -13,7 +13,7 @@ Follow these steps once. You do not need to be admin of the real server, and you
 
 1. Open <https://aistudio.google.com/apikey> and sign in with a Google account.
 2. Click **Create API key** and copy it. This is `GEMINI_API_KEY`. The free tier is enough.
-3. Check the current free Flash model ID at <https://ai.google.dev/gemini-api/docs/models>. The default in `.env.example` is `gemini-flash-latest`. Only change `GEMINI_MODEL` if that alias stops working.
+3. Check the current free Flash model ID at <https://ai.google.dev/gemini-api/docs/models>. The default is `gemini-3.5-flash`. Use a model listed for the stable API (`v1`); `-latest` aliases only exist on the beta API and fail with "not found".
 
 ## 3. (Optional) Get a Groq API key
 
@@ -114,7 +114,7 @@ This is also **fallback 2** for hosting: run the bot on your own PC. It is only 
 | `TIMEZONE` | no | Time zone for reports, default `Asia/Dhaka` |
 | `RECORDINGS_DIR` | no | Where audio is stored, default `./recordings` |
 | `GEMINI_API_KEY` | yes | Gemini key (step 2) |
-| `GEMINI_MODEL` | no | Gemini model, default `gemini-flash-latest` |
+| `GEMINI_MODEL` | no | Gemini model, default `gemini-3.5-flash` |
 | `GROQ_API_KEY` | no | Enables the Groq backup (step 3) |
 | `GROQ_MODEL` | no | Groq transcription model, default `whisper-large-v3` |
 | `GROQ_SUMMARY_MODEL` | no | Groq summary model, default `openai/gpt-oss-120b` |
