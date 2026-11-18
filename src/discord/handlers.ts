@@ -16,6 +16,8 @@ export const recordingNoticeText = (vcId: string, userId: string) =>
 export const processingText = (reportChannelId: string) =>
   `⏳ Processing the meeting… the report will be posted in <#${reportChannelId}>.`;
 export const interruptedText = '⚠️ A recording was cut off by a bot restart. Run /retry to process what was recorded.';
+export const processingInterruptedText =
+  '⚠️ Processing of a meeting was interrupted by a bot restart. Run /retry to finish it.';
 
 // ---- Copy added for error paths ----
 

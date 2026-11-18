@@ -111,6 +111,11 @@ export class SessionManager {
     return session && { meetingId: session.meetingId, voiceChannelId: session.voiceChannelId };
   }
 
+  /** Guilds with a session that is recording or still joining. */
+  activeGuildIds(): string[] {
+    return [...new Set([...this.sessions.keys(), ...this.starting.keys()])];
+  }
+
   /** Whether a session in this guild is still joining its voice channel. */
   isStarting(guildId: string): boolean {
     return this.starting.has(guildId);

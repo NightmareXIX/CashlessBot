@@ -31,6 +31,7 @@ import {
 import { registerCommands } from './discord/register-commands.js';
 import { DiscordReportPoster } from './discord/report-poster.js';
 import { RunOnce } from './discord/run-once.js';
+import { saveAndFlagForShutdown } from './discord/shutdown.js';
 import { processMeeting, type ProcessMeetingDeps } from './pipeline/process-meeting.js';
 import { SessionManager, type StartResult } from './recording/session-manager.js';
 import { connectToVoice } from './recording/voice-connection.js';
@@ -43,6 +44,8 @@ import { GroqTranscriber } from './transcription/groq-transcriber.js';
 
 const CLEANUP_INTERVAL_MS = 86_400_000;
 const SHUTDOWN_TIMEOUT_MS = 8_000;
+/** How long shutdown lets in-flight processing finish, leaving time to post notices and log out. */
+const PROCESSING_WAIT_MS = 5_000;
 
 type GuildCommand = ChatInputCommandInteraction<'cached'>;
 
@@ -219,16 +222,18 @@ async function main(): Promise<void> {
       await i.reply({ content: noReportChannelText, flags: MessageFlags.Ephemeral });
       return;
     }
+    // Finding the meeting reads meta files from disk, so acknowledge first.
+    await i.deferReply({ flags: MessageFlags.Ephemeral });
     const target = await findRetryTarget(i.guildId, i.options.getString('meeting_id'), store);
     if (!target.ok) {
-      await i.reply({ content: target.text, flags: MessageFlags.Ephemeral });
+      await i.editReply(target.text);
       return;
     }
     if (!startProcessing(target.meetingId)) {
-      await i.reply({ content: retryBusyText, flags: MessageFlags.Ephemeral });
+      await i.editReply(retryBusyText);
       return;
     }
-    await i.reply(processingText(reportChannelId));
+    await i.editReply(processingText(reportChannelId));
   };
 
   client.on(Events.InteractionCreate, async (interaction: Interaction) => {
@@ -249,6 +254,9 @@ async function main(): Promise<void> {
           return await handleStop(interaction);
         case 'retry':
           return await handleRetry(interaction);
+        default:
+          await interaction.reply({ content: genericErrorText, flags: MessageFlags.Ephemeral });
+          return;
       }
     } catch (err) {
       console.error(`/${interaction.commandName} in guild ${interaction.guildId} failed:`, err);
@@ -279,16 +287,19 @@ async function main(): Promise<void> {
     }, SHUTDOWN_TIMEOUT_MS).unref();
     clearInterval(cleanupTimer);
 
-    const guildIds = [...client.guilds.cache.keys()];
-    const stops = await Promise.allSettled(guildIds.map((id) => sessions.stop(id, 'command')));
-    const notices: Promise<void>[] = [];
-    stops.forEach((s, n) => {
-      const guildId = guildIds[n]!;
-      if (s.status === 'rejected') console.error(`Stopping the recording in guild ${guildId} failed:`, s.reason);
-      else if (s.value !== undefined) notices.push(poster.postText(guildId, interruptedText));
+    await saveAndFlagForShutdown({
+      activeGuildIds: () => sessions.activeGuildIds(),
+      stop: (guildId) => sessions.stop(guildId, 'command'),
+      processing,
+      waitMs: PROCESSING_WAIT_MS,
+      guildIdOf: async (meetingId) => (await store.load(meetingId)).guildId,
+      postText: (guildId, text) => poster.postText(guildId, text),
     });
-    await Promise.allSettled(notices);
-    await client.destroy();
+    try {
+      await client.destroy();
+    } catch (err) {
+      console.error('Logging out of Discord failed:', err);
+    }
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown('SIGINT'));

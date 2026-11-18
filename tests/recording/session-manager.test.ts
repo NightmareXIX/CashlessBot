@@ -165,6 +165,17 @@ describe('SessionManager', () => {
       expect(manager.get(G)).toBeDefined();
     });
 
+    it('activeGuildIds() lists guilds that are joining or recording', async () => {
+      expect(manager.activeGuildIds()).toEqual([]);
+      const { starting } = await startJoining();
+      expect(manager.activeGuildIds()).toEqual([G]);
+      finishConnect();
+      await starting;
+      expect(manager.activeGuildIds()).toEqual([G]);
+      await manager.stop(G, 'command');
+      expect(manager.activeGuildIds()).toEqual([]);
+    });
+
     it('stops with empty-channel right after connecting when the channel emptied during the join', async () => {
       const { starting } = await startJoining();
       const stopped = nextStop();

@@ -9,6 +9,7 @@ import {
   joinFailedText,
   joinStartedText,
   processingFailedText,
+  processingInterruptedText,
   processingText,
   processSafely,
   recordingNoticeText,
@@ -80,6 +81,9 @@ describe('fixed copy', () => {
       '🔴 Recording started in <#vc1> by <@u1>. Everything said there will be transcribed and summarized.',
     );
     expect(processingText('rc1')).toBe('⏳ Processing the meeting… the report will be posted in <#rc1>.');
+    expect(processingInterruptedText).toBe(
+      '⚠️ Processing of a meeting was interrupted by a bot restart. Run /retry to finish it.',
+    );
     expect(interruptedText).toBe(
       '⚠️ A recording was cut off by a bot restart. Run /retry to process what was recorded.',
     );
