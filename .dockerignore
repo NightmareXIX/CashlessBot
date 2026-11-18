@@ -6,3 +6,5 @@ recordings
 .superpowers
 coverage
 *.log
+.env.*
+!.env.example

@@ -14,7 +14,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 # The bot serves no HTTP, so nothing is exposed.
-# Recordings are written under /app/recordings, so the node user must own /app.
-RUN mkdir -p /app/recordings && chown -R node:node /app
+# Recordings are written under /app/recordings, so the node user must own that folder.
+RUN mkdir -p /app/recordings && chown node:node /app/recordings
 USER node
 CMD ["node", "dist/index.js"]

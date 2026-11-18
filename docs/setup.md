@@ -23,8 +23,10 @@ Groq is the backup if Gemini fails. Skip this step if you only want Gemini.
 2. List the models you can use:
 
    ```bash
-   curl https://api.groq.com/openai/v1/models -H "Authorization: Bearer $GROQ_API_KEY"
+   curl https://api.groq.com/openai/v1/models -H "Authorization: Bearer YOUR_GROQ_KEY"
    ```
+
+   Paste your own key in place of `YOUR_GROQ_KEY`. On Windows PowerShell, type `curl.exe` instead of `curl`.
 
 3. Check that `GROQ_MODEL` (transcription, default `whisper-large-v3`) and `GROQ_SUMMARY_MODEL` (summary, default `openai/gpt-oss-120b`) appear in the list. Change them in `.env` if not.
 

@@ -36,7 +36,7 @@ If a report appears, voice works and you are done. If the bot never connects to 
    npm ci && npm run build && node dist/index.js
    ```
 
-4. Set the environment variables from `.env.example` in the panel.
+4. Set the environment variables from `.env.example` in the panel. Do **not** set `NODE_ENV=production` here: the start command builds TypeScript, and that setting would skip the dev dependencies it needs.
 5. **Renew it every 4 days** or it is switched off. UDP is also unverified here, so run the UDP check above.
 
 ## Fallback 2: your own PC
