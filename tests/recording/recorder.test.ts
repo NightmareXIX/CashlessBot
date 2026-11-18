@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decodeOggOpusPackets } from '../../src/audio/ogg.js';
 import {
   CLIP_SILENCE_MS,
+  MAX_CLIP_PACKETS,
   MeetingRecorder,
   MIN_CLIP_PACKETS,
   type VoiceReceiverLike,
@@ -89,6 +90,7 @@ describe('MeetingRecorder', () => {
   it('exposes the clip thresholds', () => {
     expect(CLIP_SILENCE_MS).toBe(1000);
     expect(MIN_CLIP_PACKETS).toBe(25);
+    expect(MAX_CLIP_PACKETS).toBe(3000);
   });
 
   it('writes one clip of 30 packets with its duration, start offset and audio', async () => {
@@ -101,6 +103,47 @@ describe('MeetingRecorder', () => {
     });
     expect(saved.clips[0]).toMatchObject({ userId: 'u1', speakerName: 'Rahim', startMs: 5_000, durationMs: 600 });
     expect(await decodeOggOpusPackets(await store.readClip(meta.id, saved.clips[0]!))).toEqual(packets(30));
+  });
+
+  it('splits a long utterance into 60 s clips while it is still going, keeping every packet', async () => {
+    clock = START + 5_000;
+    const stream = await startSpeaking('u1');
+    const all = packets(6_500);
+    for (const p of all.slice(0, 3_000)) stream.write(p);
+
+    // The first chunk is written before the speaker stops.
+    const early = await waitForClips(1);
+    expect(early.clips[0]).toMatchObject({ userId: 'u1', speakerName: 'Rahim', startMs: 5_000, durationMs: 60_000 });
+
+    for (const p of all.slice(3_000)) stream.write(p);
+    stream.end();
+
+    const saved = await waitForClips(3);
+    expect(saved.clips.map((c) => [c.startMs, c.durationMs])).toEqual([
+      [5_000, 60_000],
+      [65_000, 60_000],
+      [125_000, 10_000],
+    ]);
+    const decoded = await Promise.all(saved.clips.map(async (c) => decodeOggOpusPackets(await store.readClip(meta.id, c))));
+    expect(decoded).toEqual([all.slice(0, 3_000), all.slice(3_000, 6_000), all.slice(6_000)]);
+  });
+
+  it('keeps a remainder shorter than MIN_CLIP_PACKETS after a long utterance was split', async () => {
+    await speak('u1', 3_010);
+
+    const saved = await waitForClips(2);
+    expect(saved.clips.map((c) => [c.startMs, c.durationMs])).toEqual([
+      [0, 60_000],
+      [60_000, 200],
+    ]);
+  });
+
+  it('writes nothing more when a long utterance ends exactly on a chunk boundary', async () => {
+    await speak('u1', 3_000);
+    await waitForClips(1);
+    await recorder.stop();
+
+    expect((await store.load(meta.id)).clips).toHaveLength(1);
   });
 
   it('drops an utterance shorter than MIN_CLIP_PACKETS', async () => {

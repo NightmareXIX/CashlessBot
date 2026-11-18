@@ -9,6 +9,12 @@ import type { MeetingMeta } from '../types.js';
 export const CLIP_SILENCE_MS = 1000;
 /** Utterances shorter than this many packets (25 × 20 ms = 0.5 s) are dropped. */
 export const MIN_CLIP_PACKETS = 25;
+/**
+ * Longest clip in packets (3000 × 20 ms = 60 s). A longer utterance (e.g. an open mic that is
+ * never silent for a second) is written in chunks while it goes on, so memory use and clip size
+ * stay bounded and a crash loses at most one chunk.
+ */
+export const MAX_CLIP_PACKETS = 3000;
 /** Speaker name used when the name lookup fails, so the clip is still kept. */
 export const UNKNOWN_SPEAKER = 'Unknown speaker';
 
@@ -81,11 +87,37 @@ export class MeetingRecorder {
       if (speaker.isBot) stream.destroy(); // stop buffering a bot's audio right away
       return speaker;
     });
-    const packets = await collectPackets(stream, userId);
-    this.streams.delete(stream);
-    const speaker = await lookup;
 
-    if (speaker.isBot || packets.length < MIN_CLIP_PACKETS) return;
+    // Chunks are written one after another so their clip ids stay in time order.
+    let chunksWritten = 0;
+    let writes: Promise<void> = Promise.resolve();
+    const flush = (packets: Buffer[]) => {
+      const chunkStartMs = startMs + chunksWritten * MAX_CLIP_PACKETS * FRAME_MS;
+      chunksWritten++;
+      writes = writes
+        .then(() => this.writeClip(userId, chunkStartMs, packets, lookup))
+        .catch((err: unknown) => console.error(`Recording clip for user ${userId} in meeting ${this.meta.id} failed:`, err));
+    };
+
+    let current: Buffer[] = [];
+    await collectPackets(stream, userId, (packet) => {
+      current.push(packet);
+      if (current.length >= MAX_CLIP_PACKETS) {
+        flush(current);
+        current = [];
+      }
+    });
+    this.streams.delete(stream);
+
+    // A short utterance is dropped, but the tail of a split one is always kept.
+    if (current.length >= MIN_CLIP_PACKETS || (chunksWritten > 0 && current.length > 0)) flush(current);
+    await lookup;
+    await writes;
+  }
+
+  private async writeClip(userId: string, startMs: number, packets: Buffer[], lookup: Promise<Speaker>): Promise<void> {
+    const speaker = await lookup;
+    if (speaker.isBot) return;
     const data = await encodeOggOpus(packets);
     await this.deps.store.writeClip(
       this.meta.id,
@@ -107,12 +139,11 @@ export class MeetingRecorder {
   }
 }
 
-/** Collects packets until the stream ends, closes or errors; on error keeps what arrived. */
-function collectPackets(stream: Readable, userId: string): Promise<Buffer[]> {
+/** Passes each packet to `onPacket` until the stream ends, closes or errors; on error keeps what arrived. */
+function collectPackets(stream: Readable, userId: string, onPacket: (packet: Buffer) => void): Promise<void> {
   return new Promise((resolve) => {
-    const packets: Buffer[] = [];
-    const done = () => resolve(packets);
-    stream.on('data', (packet: Buffer) => packets.push(packet));
+    const done = () => resolve();
+    stream.on('data', onPacket);
     stream.once('end', done);
     stream.once('close', done);
     stream.once('error', (err) => {
