@@ -1,6 +1,7 @@
 import type { BatchState, ClipMeta } from '../types.js';
 
-export const BATCH_LIMITS = { maxSpeechMs: 300_000, maxBytes: 15 * 1024 * 1024, maxClips: 100 };
+/** maxBytes leaves room under Gemini's 20 MB inline request limit once the audio is base64-encoded (+33%). */
+export const BATCH_LIMITS = { maxSpeechMs: 300_000, maxBytes: 12 * 1024 * 1024, maxClips: 100 };
 
 const byStart = (a: ClipMeta, b: ClipMeta) => a.startMs - b.startMs;
 
