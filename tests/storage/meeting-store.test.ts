@@ -1,7 +1,7 @@
-import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MeetingStore, isFinished } from '../../src/storage/meeting-store.js';
 
 let root: string;
@@ -28,6 +28,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await rm(root, { recursive: true, force: true });
 });
 
@@ -146,6 +147,39 @@ describe('MeetingStore', () => {
     const c = await store.load(ended.id);
     expect(c.stopReason).toBe('command');
     expect(c.endedAt).toBe('2026-03-03T01:00:00.000Z');
+  });
+
+  it('create does not overwrite an existing meeting and appends -2, -3 to the id', async () => {
+    const a = await store.create(init());
+    await store.writeClip(a.id, clipInput(), Buffer.from('keep'));
+    const b = await store.create(init());
+    const c = await store.create(init());
+    expect(b.id).toBe(`${a.id}-2`);
+    expect(c.id).toBe(`${a.id}-3`);
+    expect((await store.load(a.id)).clips).toHaveLength(1);
+    expect(await store.load(b.id)).toEqual(b);
+  });
+
+  it('create gives unique ids to concurrent starts in the same second', async () => {
+    const metas = await Promise.all(Array.from({ length: 5 }, () => store.create(init())));
+    expect(new Set(metas.map((m) => m.id)).size).toBe(5);
+  });
+
+  it('list skips corrupt or missing meta.json and warns with the id', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const good = await store.create(init({ startedAt: new Date('2026-03-01T00:00:00Z') }));
+    await mkdir(path.join(root, 'bad-json'));
+    await writeFile(path.join(root, 'bad-json', 'meta.json'), '{ not json');
+    await mkdir(path.join(root, 'bad-shape'));
+    await writeFile(path.join(root, 'bad-shape', 'meta.json'), 'null');
+    await mkdir(path.join(root, 'no-meta'));
+
+    expect((await store.list()).map((m) => m.id)).toEqual([good.id]);
+    const warned = warn.mock.calls.map((c) => String(c[0]));
+    for (const id of ['bad-json', 'bad-shape', 'no-meta']) {
+      expect(warned.some((w) => w.includes(id))).toBe(true);
+    }
+    expect(await store.markInterrupted()).toHaveLength(1);
   });
 
   it('list returns all meetings', async () => {

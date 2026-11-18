@@ -35,8 +35,9 @@ export class MeetingStore {
     voiceChannelName: string;
     startedAt: Date;
   }): Promise<MeetingMeta> {
+    const id = await this.claimMeetingDir(meetingId(init.startedAt, init.guildId));
     const meta: MeetingMeta = {
-      id: meetingId(init.startedAt, init.guildId),
+      id,
       guildId: init.guildId,
       voiceChannelId: init.voiceChannelId,
       voiceChannelName: init.voiceChannelName,
@@ -47,9 +48,23 @@ export class MeetingStore {
       segments: [],
       steps: { transcribe: 'pending', summarize: 'pending', report: 'pending' },
     };
-    await mkdir(path.join(this.meetingDir(meta.id), 'clips'), { recursive: true });
+    await mkdir(path.join(this.meetingDir(id), 'clips'));
     await this.save(meta);
     return meta;
+  }
+
+  /** Atomically claims a free meeting folder, appending -2, -3, ... if the base id is taken. */
+  private async claimMeetingDir(baseId: string): Promise<string> {
+    await mkdir(this.rootDir, { recursive: true });
+    for (let n = 1; ; n++) {
+      const id = n === 1 ? baseId : `${baseId}-${n}`;
+      try {
+        await mkdir(this.meetingDir(id));
+        return id;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      }
+    }
   }
 
   async load(id: string): Promise<MeetingMeta> {
@@ -105,9 +120,13 @@ export class MeetingStore {
     const metas: MeetingMeta[] = [];
     for (const id of entries) {
       try {
-        metas.push(await this.load(id));
+        const meta: unknown = JSON.parse(await readFile(this.metaPath(id), 'utf8'));
+        if (typeof meta !== 'object' || meta === null || typeof (meta as MeetingMeta).id !== 'string') {
+          throw new Error('not a meeting meta object');
+        }
+        metas.push(meta as MeetingMeta);
       } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT' && (err as NodeJS.ErrnoException).code !== 'ENOTDIR') throw err;
+        console.warn(`Skipping meeting "${id}": unreadable meta.json (${(err as Error).message})`);
       }
     }
     return metas;
