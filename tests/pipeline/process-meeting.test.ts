@@ -226,6 +226,35 @@ describe('processMeeting', () => {
     expect(second.reportMessageId).toBe('msg-1');
   });
 
+  it('tells the channel when a retried summary fails again, instead of posting nothing', async () => {
+    const id = await recordMeeting();
+    const poster = fakePoster();
+    await processMeeting(id, deps({ poster, summarizer: summarizer('gemini', false) }));
+
+    const second = await processMeeting(id, deps({ poster, summarizer: summarizer('gemini', false) }));
+
+    expect(poster.posts).toHaveLength(1);
+    expect(poster.texts).toEqual([{ guildId: GUILD, text: buildErrorText(second, 'summary failed again', TZ) }]);
+    expect(second.steps).toEqual({ transcribe: 'done', summarize: 'failed', report: 'done' });
+    expect(second.reportComplete).toBe(false);
+  });
+
+  it('tells the channel when a retried batch fails again, instead of posting nothing', async () => {
+    const id = await recordMeeting();
+    const poster = fakePoster();
+    const failing = () => deps({ poster, primary: transcriber('gemini', ['c0002']), fallback: transcriber('groq', ['c0002']) });
+    await processMeeting(id, failing());
+
+    const second = await processMeeting(id, failing());
+
+    expect(poster.posts).toHaveLength(1);
+    expect(poster.texts).toEqual([
+      { guildId: GUILD, text: buildErrorText(second, 'some audio still could not be transcribed', TZ) },
+    ]);
+    expect(second.batches.map((b) => b.status)).toEqual(['done', 'failed']);
+    expect(second.reportComplete).toBe(false);
+  });
+
   it('uses the fallback summarizer when the primary fails', async () => {
     const id = await recordMeeting();
     const fallback = summarizer('groq');

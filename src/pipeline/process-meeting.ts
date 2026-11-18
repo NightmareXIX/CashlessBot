@@ -98,6 +98,7 @@ export async function processMeeting(meetingId: string, deps: ProcessMeetingDeps
     m.steps.transcribe = hasGaps ? 'failed' : 'done';
   });
 
+  let summaryFailedAgain = false;
   if (!meta.summary || meta.steps.summarize !== 'done') {
     const transcript = renderTranscriptLines(buildTranscriptLines(meta));
     const participants = Object.values(meta.participants);
@@ -109,6 +110,7 @@ export async function processMeeting(meetingId: string, deps: ProcessMeetingDeps
       }
       m.steps.summarize = summary ? 'done' : 'failed';
     });
+    summaryFailedAgain = !summary;
   }
 
   const notes: string[] = [];
@@ -117,7 +119,8 @@ export async function processMeeting(meetingId: string, deps: ProcessMeetingDeps
   if (hasGaps) notes.push(NOTE_GAPS);
 
   const previousReportId = meta.reportMessageId;
-  if (previousReportId === undefined || meta.steps.report !== 'done') {
+  const willPost = previousReportId === undefined || meta.steps.report !== 'done';
+  if (willPost) {
     const messages = buildReportMessages({
       meta,
       summary: meta.summary,
@@ -137,10 +140,20 @@ export async function processMeeting(meetingId: string, deps: ProcessMeetingDeps
     }
   }
 
-  return store.update(meetingId, (m) => {
+  meta = await store.update(meetingId, (m) => {
     m.steps.report = 'done';
     m.reportComplete = notes.length === 0 && m.steps.summarize === 'done';
   });
+
+  // A /retry that changed nothing posts no report, so say what is still wrong instead of staying silent.
+  if (!willPost && !isFinished(meta)) {
+    const problems: string[] = [];
+    if (summaryFailedAgain) problems.push('summary failed again');
+    if (hasGaps) problems.push('some audio still could not be transcribed');
+    const what = problems.length > 0 ? problems.join(' and ') : 'the report is still incomplete';
+    await poster.postText(meta.guildId, buildErrorText(meta, what, tz));
+  }
+  return meta;
 }
 
 /** Tries the primary summarizer, then the fallback; undefined when both fail. */
