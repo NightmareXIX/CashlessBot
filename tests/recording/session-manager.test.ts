@@ -124,6 +124,90 @@ describe('SessionManager', () => {
     await startOk();
   });
 
+  it('rethrows the connect error even when removing the meeting fails, and logs the remove failure', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    connect.mockRejectedValueOnce(new Error('join timed out'));
+    vi.spyOn(store, 'remove').mockRejectedValueOnce(new Error('EACCES'));
+
+    await expect(start()).rejects.toThrow('join timed out');
+
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(String(error.mock.calls[0])).toContain('EACCES');
+    expect(manager.get(G)).toBeUndefined();
+    error.mockRestore();
+  });
+
+  describe('stop signals while the join is in progress', () => {
+    let finishConnect!: () => void;
+    let connection: FakeConnection;
+
+    /** Starts a session and waits until it is joining, with connect pending until finishConnect(). */
+    async function startJoining(): Promise<{ starting: ReturnType<typeof start> }> {
+      connection = new FakeConnection();
+      connect.mockImplementationOnce(
+        () => new Promise((resolve) => (finishConnect = () => resolve(connection))),
+      );
+      const starting = start();
+      await vi.waitFor(() => expect(connect).toHaveBeenCalled());
+      return { starting };
+    }
+
+    it('stops with empty-channel right after connecting when the channel emptied during the join', async () => {
+      const { starting } = await startJoining();
+      const stopped = nextStop();
+
+      manager.handleHumanCount(G, VC, 0);
+      await new Promise((r) => setImmediate(r));
+      expect(onStopped).not.toHaveBeenCalled();
+      finishConnect();
+
+      const result = await starting;
+      expect(result.ok).toBe(true);
+      const meetingId = result.ok ? result.meetingId : '';
+      expect(await stopped).toEqual([meetingId, 'empty-channel']);
+      expect(onStopped).toHaveBeenCalledTimes(1);
+      expect(connection.destroy).toHaveBeenCalledTimes(1);
+      expect(manager.get(G)).toBeUndefined();
+    });
+
+    it('stop() during the join stops the session once it connects, under the first requested reason', async () => {
+      const { starting } = await startJoining();
+
+      const stopping = manager.stop(G, 'command');
+      manager.handleHumanCount(G, VC, 0); // a later stop signal does not change the reason
+      finishConnect();
+
+      const result = await starting;
+      expect(await stopping).toBe(result.ok ? result.meetingId : 'not ok');
+      expect(onStopped).toHaveBeenCalledTimes(1);
+      expect(onStopped).toHaveBeenCalledWith(result.ok && result.meetingId, 'command');
+    });
+
+    it('keeps recording when a human comes back before the join completes', async () => {
+      const { starting } = await startJoining();
+
+      manager.handleHumanCount(G, VC, 0);
+      manager.handleHumanCount(G, VC, 1);
+      finishConnect();
+      await starting;
+      await new Promise((r) => setImmediate(r));
+
+      expect(connection.destroy).not.toHaveBeenCalled();
+      expect(onStopped).not.toHaveBeenCalled();
+    });
+
+    it('ignores an empty count for another channel during the join', async () => {
+      const { starting } = await startJoining();
+
+      manager.handleHumanCount(G, 'other-vc', 0);
+      finishConnect();
+      await starting;
+      await new Promise((r) => setImmediate(r));
+
+      expect(connection.destroy).not.toHaveBeenCalled();
+    });
+  });
+
   it('stops with empty-channel when the active channel has no humans left', async () => {
     const meetingId = await startOk();
     const stopped = nextStop();

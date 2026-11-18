@@ -14,6 +14,9 @@ export async function connectToVoice(guild: Guild, channelId: string): Promise<V
     selfDeaf: false,
     selfMute: true,
   });
+  // Networking errors (UDP, WebSocket, IP discovery, DAVE) are re-emitted here; an unhandled
+  // 'error' event would crash the bot. The state handlers below deal with the fallout.
+  connection.on('error', (err) => console.error(`Voice connection error in guild ${guild.id}:`, err));
   const destroyOnce = () => {
     if (connection.state.status !== VoiceConnectionStatus.Destroyed) connection.destroy();
   };

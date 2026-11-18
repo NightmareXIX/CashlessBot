@@ -34,11 +34,19 @@ interface Session {
   stopping?: Promise<string>;
 }
 
+/** A session still being set up (meeting created, voice connection pending). */
+interface PendingStart {
+  voiceChannelId: string;
+  /** A stop requested during the join, applied as soon as the session exists. */
+  stopReason?: StopReason;
+  /** Settles when the start finishes, whether or not it succeeded. */
+  settled: Promise<void>;
+}
+
 /** Runs at most one recording session per guild and stops it on command or automatically. */
 export class SessionManager {
   private readonly sessions = new Map<string, Session>();
-  /** Guilds whose session is still being set up, mapped to the channel being joined. */
-  private readonly starting = new Map<string, string>();
+  private readonly starting = new Map<string, PendingStart>();
   private readonly maxDurationMs: number;
 
   constructor(private readonly deps: SessionManagerDeps) {
@@ -47,17 +55,22 @@ export class SessionManager {
 
   async start(p: { guildId: string; voiceChannelId: string; voiceChannelName: string }): Promise<StartResult> {
     const { guildId, voiceChannelId } = p;
-    const busyChannel = this.sessions.get(guildId)?.voiceChannelId ?? this.starting.get(guildId);
+    const busyChannel = (this.sessions.get(guildId) ?? this.starting.get(guildId))?.voiceChannelId;
     if (busyChannel !== undefined) return { ok: false, reason: 'already-recording', voiceChannelId: busyChannel };
 
-    this.starting.set(guildId, voiceChannelId);
+    let settle!: () => void;
+    const pending: PendingStart = { voiceChannelId, settled: new Promise((resolve) => (settle = resolve)) };
+    this.starting.set(guildId, pending);
     try {
       const meta = await this.deps.store.create({ ...p, startedAt: new Date() });
       let connection: VoiceConnectionLike;
       try {
         connection = await this.deps.connect(guildId, voiceChannelId);
       } catch (err) {
-        await this.deps.store.remove(meta.id); // nothing was recorded, so leave nothing for /retry
+        // Nothing was recorded, so leave nothing for /retry; the connect error is what the caller needs.
+        await this.deps.store.remove(meta.id).catch((removeErr: unknown) =>
+          console.error(`Removing meeting ${meta.id} after a failed join failed:`, removeErr),
+        );
         throw err;
       }
 
@@ -69,18 +82,28 @@ export class SessionManager {
       const timer = setTimeout(() => this.autoStop(guildId, 'max-duration'), this.maxDurationMs);
       this.sessions.set(guildId, { meetingId: meta.id, voiceChannelId, connection, recorder, timer });
       connection.onLost(() => this.autoStop(guildId, 'disconnected'));
+      if (pending.stopReason) this.autoStop(guildId, pending.stopReason);
       return { ok: true, meetingId: meta.id };
     } finally {
       this.starting.delete(guildId);
+      settle();
     }
   }
 
-  /** Stops the guild's session and returns its meeting id. Concurrent calls share one stop. */
+  /**
+   * Stops the guild's session and returns its meeting id. Concurrent calls share one stop.
+   * During a join, the stop is applied once the session exists (undefined if the join fails).
+   */
   stop(guildId: string, reason: StopReason): Promise<string | undefined> {
     const session = this.sessions.get(guildId);
-    if (!session) return Promise.resolve(undefined);
-    session.stopping ??= this.finish(guildId, session, reason);
-    return session.stopping;
+    if (session) {
+      session.stopping ??= this.finish(guildId, session, reason);
+      return session.stopping;
+    }
+    const pending = this.starting.get(guildId);
+    if (!pending) return Promise.resolve(undefined);
+    pending.stopReason ??= reason;
+    return pending.settled.then(() => this.stop(guildId, reason));
   }
 
   get(guildId: string): { meetingId: string; voiceChannelId: string } | undefined {
@@ -89,6 +112,13 @@ export class SessionManager {
   }
 
   handleHumanCount(guildId: string, channelId: string, humans: number): void {
+    const pending = this.starting.get(guildId);
+    if (pending?.voiceChannelId === channelId) {
+      // Joining: remember an emptied channel, and forget it if someone comes back before the join completes.
+      if (humans === 0) pending.stopReason ??= 'empty-channel';
+      else if (pending.stopReason === 'empty-channel') pending.stopReason = undefined;
+      return;
+    }
     if (humans === 0 && this.sessions.get(guildId)?.voiceChannelId === channelId) {
       this.autoStop(guildId, 'empty-channel');
     }
