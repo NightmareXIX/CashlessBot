@@ -22,7 +22,7 @@ describe('loadConfig', () => {
     expect(cfg.discordClientId).toBe('cid');
     expect(cfg.timezone).toBe('Asia/Dhaka');
     expect(cfg.recordingsDir).toBe('./recordings');
-    expect(cfg.gemini).toEqual({ apiKey: 'gk', model: 'gemini-flash-latest' });
+    expect(cfg.gemini).toEqual({ apiKey: 'gk', model: 'gemini-3.5-flash' });
     expect(cfg.primaryTranscriber).toBe('gemini');
   });
 
