@@ -85,6 +85,7 @@ describe('buildReportMessages', () => {
     const embed = messages[0].embeds[0];
     expect(embed.title).toBe('📋 Meeting Report — 18 Nov 2026, 9:00 PM–9:52 PM (52 min)');
     expect(embed.color).toBe(0x5865f2);
+    expect(embed.footer).toEqual({ text: 'Meeting ID: m1' });
     expect(embed.description).toBe(
       [
         '#general-voice · Participants: Rahim Uddin, Karim',
@@ -168,7 +169,7 @@ describe('buildReportMessages', () => {
       let total = 0;
       for (const embed of message.embeds) {
         expect(embed.description!.length).toBeLessThanOrEqual(4096);
-        total += (embed.title?.length ?? 0) + embed.description!.length;
+        total += (embed.title?.length ?? 0) + embed.description!.length + (embed.footer?.text.length ?? 0);
       }
       expect(total).toBeLessThanOrEqual(6000);
     }
@@ -180,6 +181,8 @@ describe('buildReportMessages', () => {
     for (const message of messages.slice(1)) expect(message.files).toHaveLength(0);
     expect(messages[0].embeds[0].title).toBeDefined();
     expect(messages[0].embeds.slice(1).every((e) => e.title === undefined)).toBe(true);
+    expect(messages[0].embeds[0].footer).toEqual({ text: 'Meeting ID: m1' });
+    expect(messages.flatMap((m) => m.embeds).filter((e) => e.footer !== undefined)).toHaveLength(1);
     for (const message of messages.slice(1)) {
       expect(message.embeds.every((e) => e.title === undefined)).toBe(true);
     }
@@ -224,7 +227,10 @@ describe('buildReportMessages', () => {
     for (const d of descriptions) expect(d.length).toBeLessThanOrEqual(4096);
     expect(descriptions.join('')).toContain(longIdea);
     for (const m of messages) {
-      const total = m.embeds.reduce((n, e) => n + (e.title?.length ?? 0) + e.description!.length, 0);
+      const total = m.embeds.reduce(
+        (n, e) => n + (e.title?.length ?? 0) + e.description!.length + (e.footer?.text.length ?? 0),
+        0,
+      );
       expect(total).toBeLessThanOrEqual(6000);
     }
   });
@@ -233,7 +239,7 @@ describe('buildReportMessages', () => {
 describe('buildErrorText', () => {
   it('formats the failure message', () => {
     expect(buildErrorText(makeMeta(), 'Transcription failed', TZ)).toBe(
-      '❌ Processing failed for the meeting in #general-voice (18 Nov 2026, 9:00 PM): Transcription failed. Run /retry to try again.',
+      '❌ Processing failed for the meeting in #general-voice (18 Nov 2026, 9:00 PM): Transcription failed. Run /retry to try again (meeting `m1`).',
     );
   });
 });
