@@ -39,13 +39,16 @@ export async function processMeeting(meetingId: string, deps: ProcessMeetingDeps
   let meta = await store.load(meetingId);
   if (isFinished(meta)) return meta;
 
-  if (meta.clips.length === 0) {
+  /** Posts NO_SPEECH_TEXT and marks the meeting finished. */
+  const finishWithoutSpeech = async () => {
     await postOrFail(store, meetingId, () => poster.postText(meta.guildId, NO_SPEECH_TEXT));
     return store.update(meetingId, (m) => {
       m.steps = { transcribe: 'done', summarize: 'done', report: 'done' };
       m.reportComplete = true;
     });
-  }
+  };
+
+  if (meta.clips.length === 0) return finishWithoutSpeech();
 
   if (meta.batches.length === 0) {
     const sizes = new Map<string, number>();
@@ -99,13 +102,7 @@ export async function processMeeting(meetingId: string, deps: ProcessMeetingDeps
   });
 
   // Only noise was recorded: summarizing an empty transcript would invite made-up content.
-  if (!hasGaps && meta.segments.every((s) => s.text.trim() === '')) {
-    await postOrFail(store, meetingId, () => poster.postText(meta.guildId, NO_SPEECH_TEXT));
-    return store.update(meetingId, (m) => {
-      m.steps = { transcribe: 'done', summarize: 'done', report: 'done' };
-      m.reportComplete = true;
-    });
-  }
+  if (!hasGaps && meta.segments.every((s) => s.text.trim() === '')) return finishWithoutSpeech();
 
   let summaryFailedAgain = false;
   if (!meta.summary || meta.steps.summarize !== 'done') {
