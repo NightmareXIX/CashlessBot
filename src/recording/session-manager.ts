@@ -111,6 +111,11 @@ export class SessionManager {
     return session && { meetingId: session.meetingId, voiceChannelId: session.voiceChannelId };
   }
 
+  /** Whether a session in this guild is still joining its voice channel. */
+  isStarting(guildId: string): boolean {
+    return this.starting.has(guildId);
+  }
+
   handleHumanCount(guildId: string, channelId: string, humans: number): void {
     const pending = this.starting.get(guildId);
     if (pending?.voiceChannelId === channelId) {

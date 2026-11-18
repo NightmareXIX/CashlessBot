@@ -1,8 +1,19 @@
 import { AttachmentBuilder, type Client, type SendableChannels } from 'discord.js';
 import type { ReportMessage, ReportPoster } from '../types.js';
 
-/** Discord refuses replies when the bot lacks Read Message History in the channel. */
-const CANNOT_REPLY_WITHOUT_HISTORY = 160002;
+const CANNOT_REPLY_WITHOUT_HISTORY = 160002; // the bot lacks Read Message History (not in the invite)
+const UNKNOWN_MESSAGE = 10008;
+const INVALID_FORM_BODY = 50035;
+
+/** Whether a send failed because of its reply reference, rather than the message itself. */
+function isReplyReferenceError(err: unknown): boolean {
+  const { code, message } = (err ?? {}) as { code?: unknown; message?: unknown };
+  if (code === CANNOT_REPLY_WITHOUT_HISTORY || code === UNKNOWN_MESSAGE) return true;
+  return code === INVALID_FORM_BODY && typeof message === 'string' && /message_reference/i.test(message);
+}
+
+export const updateLinkText = (guildId: string, channelId: string, messageId: string) =>
+  `🔁 Update to the earlier report: https://discord.com/channels/${guildId}/${channelId}/${messageId}`;
 
 /** Posts reports and notices to each guild's configured report channel. */
 export class DiscordReportPoster implements ReportPoster {
@@ -12,7 +23,7 @@ export class DiscordReportPoster implements ReportPoster {
   ) {}
 
   async post(guildId: string, messages: ReportMessage[], replyTo?: string): Promise<string> {
-    const channel = await this.channel(guildId);
+    const { channel, channelId } = await this.channel(guildId);
     let firstId: string | undefined;
     for (const [i, message] of messages.entries()) {
       const payload = {
@@ -25,9 +36,10 @@ export class DiscordReportPoster implements ReportPoster {
       try {
         sent = await channel.send({ ...payload, reply });
       } catch (err) {
-        if (!reply || (err as { code?: unknown }).code !== CANNOT_REPLY_WITHOUT_HISTORY) throw err;
-        // Still post the updated report, just not as a reply to the old one.
-        sent = await channel.send(payload);
+        if (!reply || !isReplyReferenceError(err)) throw err;
+        // Post the update as a normal message that links the earlier report instead.
+        const link = updateLinkText(guildId, channelId, reply.messageReference);
+        sent = await channel.send({ ...payload, content: payload.content ? `${link}\n${payload.content}` : link });
       }
       firstId ??= sent.id;
     }
@@ -36,16 +48,16 @@ export class DiscordReportPoster implements ReportPoster {
   }
 
   async postText(guildId: string, text: string): Promise<void> {
-    const channel = await this.channel(guildId);
+    const { channel } = await this.channel(guildId);
     // Mentions in notices render as names but don't ping anyone.
     await channel.send({ content: text, allowedMentions: { parse: [] } });
   }
 
-  private async channel(guildId: string): Promise<SendableChannels> {
+  private async channel(guildId: string): Promise<{ channel: SendableChannels; channelId: string }> {
     const channelId = this.reportChannels.get(guildId);
     if (!channelId) throw new Error(`No report channel is configured for guild ${guildId}`);
     const channel = await this.client.channels.fetch(channelId);
     if (!channel?.isSendable()) throw new Error(`Report channel ${channelId} is not a channel I can send messages to`);
-    return channel;
+    return { channel, channelId };
   }
 }

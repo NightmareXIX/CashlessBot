@@ -118,6 +118,7 @@ describe('SessionManager', () => {
     connect.mockRejectedValueOnce(new Error('join timed out'));
     await expect(start()).rejects.toThrow('join timed out');
     expect(manager.get(G)).toBeUndefined();
+    expect(manager.isStarting(G)).toBe(false);
     expect(await readdir(root)).toEqual([]);
     expect(onStopped).not.toHaveBeenCalled();
 
@@ -151,6 +152,18 @@ describe('SessionManager', () => {
       await vi.waitFor(() => expect(connect).toHaveBeenCalled());
       return { starting };
     }
+
+    it('isStarting() is true only while the join is in progress', async () => {
+      expect(manager.isStarting(G)).toBe(false);
+      const { starting } = await startJoining();
+      expect(manager.isStarting(G)).toBe(true);
+      expect(manager.isStarting('other-guild')).toBe(false);
+      expect(manager.get(G)).toBeUndefined();
+      finishConnect();
+      await starting;
+      expect(manager.isStarting(G)).toBe(false);
+      expect(manager.get(G)).toBeDefined();
+    });
 
     it('stops with empty-channel right after connecting when the channel emptied during the join', async () => {
       const { starting } = await startJoining();

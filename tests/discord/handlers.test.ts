@@ -59,6 +59,15 @@ describe('checkStop', () => {
 
   it('allows the stop when a session is active', () => {
     expect(checkStop({ meetingId: 'm1', voiceChannelId: 'vc1' })).toBeNull();
+    expect(checkStop({ meetingId: 'm1', voiceChannelId: 'vc1' }, false)).toBeNull();
+  });
+
+  it('allows the stop while a join is in progress', () => {
+    expect(checkStop(undefined, true)).toBeNull();
+  });
+
+  it('refuses when there is neither a session nor a join in progress', () => {
+    expect(checkStop(undefined, false)).toBe("I'm not recording right now.");
   });
 });
 

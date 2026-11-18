@@ -21,6 +21,7 @@ import {
   joinStartedText,
   noReportChannelText,
   noticeFailedText,
+  notRecordingText,
   processingText,
   processSafely,
   recordingNoticeText,
@@ -195,13 +196,18 @@ async function main(): Promise<void> {
   };
 
   const handleStop = async (i: GuildCommand) => {
-    const refusal = checkStop(sessions.get(i.guildId));
+    const refusal = checkStop(sessions.get(i.guildId), sessions.isStarting(i.guildId));
     if (refusal) {
       await i.reply({ content: refusal, flags: MessageFlags.Ephemeral });
       return;
     }
     await i.deferReply();
-    await sessions.stop(i.guildId, 'command');
+    // During a join this waits for it to finish; undefined means the join failed, so nothing was recorded.
+    const meetingId = await sessions.stop(i.guildId, 'command');
+    if (meetingId === undefined) {
+      await i.editReply(notRecordingText);
+      return;
+    }
     // A session can only start with a report channel, and REPORT_CHANNELS can't change while running.
     const reportChannelId = config.reportChannels.get(i.guildId) ?? i.channelId;
     await i.editReply(processingText(reportChannelId));

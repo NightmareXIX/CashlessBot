@@ -41,8 +41,9 @@ export function checkJoin(p: {
   return null;
 }
 
-export function checkStop(active?: object): string | null {
-  return active ? null : notRecordingText;
+/** `/stop` works on an active session, and on one that is still joining (it stops once connected). */
+export function checkStop(active?: object, joining = false): string | null {
+  return active || joining ? null : notRecordingText;
 }
 
 /** Meeting ids are folder names created by MeetingStore; anything else (e.g. a path) is rejected. */
