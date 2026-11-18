@@ -58,10 +58,10 @@ describe('mentionFor', () => {
     expect(mentionFor('rahim', { u1: 'Rahim', u2: 'Rahim B' })).toBe('rahim');
   });
 
-  it('never matches an empty or blank name, nor an empty display name', () => {
-    expect(mentionFor('', participants)).toBe('');
-    expect(mentionFor('   ', participants)).toBe('   ');
-    expect(mentionFor('', { u1: '', u2: '  ' })).toBe('');
+  it('treats an empty or blank name as unassigned and never matches an empty display name', () => {
+    expect(mentionFor('', participants)).toBe('unassigned');
+    expect(mentionFor('   ', participants)).toBe('unassigned');
+    expect(mentionFor('', { u1: '', u2: '  ' })).toBe('unassigned');
     expect(mentionFor('x', { u1: '' })).toBe('x');
   });
 

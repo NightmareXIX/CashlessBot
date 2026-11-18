@@ -18,12 +18,11 @@ export interface ReportInput {
 
 /**
  * `<@id>` when exactly one participant's display name, or its first word, matches `name`
- * (case-insensitive). Ambiguous or empty names are returned as-is so nobody is pinged by mistake.
+ * (case-insensitive). Ambiguous names are returned as-is so nobody is pinged by mistake; null or blank means unassigned.
  */
 export function mentionFor(name: string | null, participants: Record<string, string>): string {
-  if (name === null) return 'unassigned';
-  const wanted = name.trim().toLowerCase();
-  if (wanted === '') return name;
+  const wanted = name?.trim().toLowerCase() ?? '';
+  if (name === null || wanted === '') return 'unassigned';
   const matches = Object.entries(participants).filter(([, displayName]) => {
     const full = displayName.trim().toLowerCase();
     return full !== '' && (wanted === full || wanted === full.split(/\s+/)[0]);
