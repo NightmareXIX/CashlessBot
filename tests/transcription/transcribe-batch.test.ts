@@ -91,6 +91,28 @@ describe('transcribeBatch', () => {
     expect(result.segments.map((s) => s.text)).toEqual(['text-c0001']);
   });
 
+  it('logs a warning naming both providers and the cause when it falls back', async () => {
+    const clips = [clip('c0001', 'uA', 0)];
+    const { batch, readClip } = await setup(clips);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await transcribeBatch(batch, clips, {
+        readClip,
+        primary: failing('gemini', 'model not found'),
+        fallback: working('groq'),
+        retry: once,
+      });
+      expect(warn).toHaveBeenCalledOnce();
+      const message = String(warn.mock.calls[0]![0]);
+      expect(message).toContain('gemini');
+      expect(message).toContain('groq');
+      expect(message).toContain(batch.id);
+      expect(message).toContain('model not found');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("rejects with the fallback's error when both providers fail", async () => {
     const clips = [clip('c0001', 'uA', 0)];
     const { batch, readClip } = await setup(clips);

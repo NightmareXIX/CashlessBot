@@ -33,6 +33,10 @@ export async function transcribeBatch(
     return await run(deps.primary);
   } catch (err) {
     if (!deps.fallback) throw err;
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `Transcription of batch ${batch.id} with ${deps.primary.name} failed, using ${deps.fallback.name}: ${reason}`,
+    );
     return run(deps.fallback);
   }
 }
