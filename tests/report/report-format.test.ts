@@ -50,6 +50,21 @@ describe('mentionFor', () => {
     expect(mentionFor('Someone', participants)).toBe('Someone');
   });
 
+  it('returns the plain name when more than one participant matches', () => {
+    expect(mentionFor('rahim', { u1: 'Rahim A', u2: 'Rahim B' })).toBe('rahim');
+  });
+
+  it('returns the plain name when a full name and a first word both match different people', () => {
+    expect(mentionFor('rahim', { u1: 'Rahim', u2: 'Rahim B' })).toBe('rahim');
+  });
+
+  it('never matches an empty or blank name, nor an empty display name', () => {
+    expect(mentionFor('', participants)).toBe('');
+    expect(mentionFor('   ', participants)).toBe('   ');
+    expect(mentionFor('', { u1: '', u2: '  ' })).toBe('');
+    expect(mentionFor('x', { u1: '' })).toBe('x');
+  });
+
   it('returns "unassigned" for null', () => {
     expect(mentionFor(null, participants)).toBe('unassigned');
   });
@@ -168,6 +183,32 @@ describe('buildReportMessages', () => {
     for (const message of messages.slice(1)) {
       expect(message.embeds.every((e) => e.title === undefined)).toBe(true);
     }
+  });
+
+  it('never ends a description on a block header line', () => {
+    const headers = ['**Overview**', '**💡 Ideas discussed**', '**✅ Tasks**'];
+    let tasksHeaderStartedAChunk = false;
+    for (let filler = 3400; filler <= 4000; filler++) {
+      const messages = buildReportMessages({
+        meta: makeMeta(),
+        summary: {
+          overview: 'o',
+          ideas: [{ idea: 'z'.repeat(filler), raisedBy: null }],
+          tasks: [{ task: 't'.repeat(500), owner: null, due: null }],
+        },
+        transcriptFile,
+        notes: [],
+        timezone: TZ,
+      });
+      for (const embed of messages.flatMap((m) => m.embeds)) {
+        const description = embed.description!;
+        expect(description.length).toBeLessThanOrEqual(4096);
+        const lastLine = description.slice(description.lastIndexOf('\n') + 1);
+        expect(headers, `filler ${filler}`).not.toContain(lastLine);
+        if (description.startsWith('**✅ Tasks**\n')) tasksHeaderStartedAChunk = true;
+      }
+    }
+    expect(tasksHeaderStartedAChunk).toBe(true);
   });
 
   it('hard-splits a single line longer than 4096 characters', () => {

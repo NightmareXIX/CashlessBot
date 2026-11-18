@@ -16,15 +16,19 @@ export interface ReportInput {
   updated?: boolean;
 }
 
-/** `<@id>` when the name matches a participant's display name or its first word; otherwise the plain name. */
+/**
+ * `<@id>` when exactly one participant's display name, or its first word, matches `name`
+ * (case-insensitive). Ambiguous or empty names are returned as-is so nobody is pinged by mistake.
+ */
 export function mentionFor(name: string | null, participants: Record<string, string>): string {
   if (name === null) return 'unassigned';
   const wanted = name.trim().toLowerCase();
-  for (const [id, displayName] of Object.entries(participants)) {
+  if (wanted === '') return name;
+  const matches = Object.entries(participants).filter(([, displayName]) => {
     const full = displayName.trim().toLowerCase();
-    if (wanted === full || wanted === full.split(/\s+/)[0]) return `<@${id}>`;
-  }
-  return name;
+    return full !== '' && (wanted === full || wanted === full.split(/\s+/)[0]);
+  });
+  return matches.length === 1 ? `<@${matches[0][0]}>` : name;
 }
 
 export function buildErrorText(meta: MeetingMeta, what: string, timezone: string): string {
@@ -85,26 +89,50 @@ function hardSplit(line: string, max: number): string[] {
   return pieces;
 }
 
-/** Splits at line boundaries into chunks of at most `max` characters. */
+const BLOCK_HEADERS = new Set(['**Overview**', '**💡 Ideas discussed**', '**✅ Tasks**']);
+
+/**
+ * Splits at line boundaries into chunks of at most `max` characters. A block header is never left
+ * as the last line of a chunk: it moves to the start of the next one so it stays with its body.
+ */
 function chunkDescription(text: string, max: number): string[] {
   const chunks: string[] = [];
   let current = '';
-  const flush = () => {
-    if (current !== '') chunks.push(current);
-    current = '';
+
+  // Closes the current chunk, carrying a trailing block header over to the next one.
+  const closeChunk = () => {
+    const idx = current.lastIndexOf('\n');
+    if (idx !== -1 && BLOCK_HEADERS.has(current.slice(idx + 1))) {
+      const head = current.slice(0, idx).replace(/\n+$/, '');
+      if (head !== '') chunks.push(head);
+      current = current.slice(idx + 1);
+    } else {
+      chunks.push(current);
+      current = '';
+    }
   };
 
   for (const line of text.split('\n')) {
-    for (const piece of line.length > max ? hardSplit(line, max) : [line]) {
-      if (current === '') current = piece;
-      else if (current.length + 1 + piece.length <= max) current += `\n${piece}`;
-      else {
-        flush();
-        current = piece;
+    let rest = line;
+    for (;;) {
+      const sep = current === '' ? '' : '\n';
+      const room = max - current.length - sep.length;
+      if (rest.length <= room) {
+        current += sep + rest;
+        break;
       }
+      if (current !== '' && !BLOCK_HEADERS.has(current)) {
+        closeChunk();
+        continue;
+      }
+      // Empty chunk, or a lone header: fill what room is left and carry on with the remainder.
+      const [head, ...others] = hardSplit(rest, room);
+      chunks.push(current + sep + head);
+      current = '';
+      rest = others.join('');
     }
   }
-  flush();
+  if (current !== '') chunks.push(current);
   return chunks;
 }
 
