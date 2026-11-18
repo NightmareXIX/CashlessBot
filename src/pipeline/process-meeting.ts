@@ -12,6 +12,7 @@ import type { MeetingMeta, MeetingSummary, ReportPoster, Summarizer, Transcriber
 import { withRetry } from '../util/retry.js';
 
 export const NOTE_SUMMARY_FAILED = 'Summary failed — run /retry to try again.';
+export const NOTE_SUMMARY_STALE = 'Summary is from before missing audio was recovered — run /retry to refresh it.';
 export const NOTE_GAPS = 'Some audio could not be transcribed (marked in the transcript). Run /retry to try again.';
 export const NO_SPEECH_TEXT = 'No speech was recorded in this meeting.';
 
@@ -29,7 +30,8 @@ const errorMessage = (err: unknown) => (err instanceof Error ? err.message : Str
 /**
  * Transcribes, summarizes and reports a recorded meeting. Progress is saved
  * after every step, so running it again (/retry) resumes where it stopped and
- * never redoes work that already succeeded.
+ * never redoes work that already succeeded. New work resets the later steps to
+ * 'pending' in the same save, so a crash before they run can't lose the update.
  */
 export async function processMeeting(meetingId: string, deps: ProcessMeetingDeps): Promise<MeetingMeta> {
   const { store, poster, timezone: tz } = deps;
@@ -56,7 +58,6 @@ export async function processMeeting(meetingId: string, deps: ProcessMeetingDeps
 
   // Transcribe every batch that isn't done yet, saving after each one.
   const clipsById = new Map(meta.clips.map((c) => [c.id, c]));
-  let newlyTranscribed = 0;
   for (const batch of meta.batches) {
     if (batch.status === 'done') continue;
     const clips = batch.clipIds.flatMap((id) => clipsById.get(id) ?? []);
@@ -73,8 +74,9 @@ export async function processMeeting(meetingId: string, deps: ProcessMeetingDeps
         saved.status = 'done';
         saved.provider = provider;
         delete saved.error;
+        m.steps.summarize = 'pending';
+        m.steps.report = 'pending';
       });
-      newlyTranscribed++;
     } catch (err) {
       meta = await store.update(meetingId, (m) => {
         const saved = m.batches.find((b) => b.id === batch.id)!;
@@ -96,26 +98,26 @@ export async function processMeeting(meetingId: string, deps: ProcessMeetingDeps
     m.steps.transcribe = hasGaps ? 'failed' : 'done';
   });
 
-  let newSummary = false;
-  if (!meta.summary || newlyTranscribed > 0) {
+  if (!meta.summary || meta.steps.summarize !== 'done') {
     const transcript = renderTranscriptLines(buildTranscriptLines(meta));
     const participants = Object.values(meta.participants);
     const summary = await summarize(deps.summarizers, retry, transcript, participants);
-    newSummary = summary !== undefined;
     meta = await store.update(meetingId, (m) => {
-      if (summary) m.summary = summary;
+      if (summary) {
+        m.summary = summary;
+        m.steps.report = 'pending';
+      }
       m.steps.summarize = summary ? 'done' : 'failed';
     });
   }
 
   const notes: string[] = [];
   if (!meta.summary) notes.push(NOTE_SUMMARY_FAILED);
+  else if (meta.steps.summarize !== 'done') notes.push(NOTE_SUMMARY_STALE);
   if (hasGaps) notes.push(NOTE_GAPS);
 
   const previousReportId = meta.reportMessageId;
-  // A failed earlier post counts as a change, so its content is not lost.
-  const changed = newSummary || newlyTranscribed > 0 || meta.steps.report === 'failed';
-  if (previousReportId === undefined || changed) {
+  if (previousReportId === undefined || meta.steps.report !== 'done') {
     const messages = buildReportMessages({
       meta,
       summary: meta.summary,
@@ -137,7 +139,7 @@ export async function processMeeting(meetingId: string, deps: ProcessMeetingDeps
 
   return store.update(meetingId, (m) => {
     m.steps.report = 'done';
-    m.reportComplete = notes.length === 0;
+    m.reportComplete = notes.length === 0 && m.steps.summarize === 'done';
   });
 }
 

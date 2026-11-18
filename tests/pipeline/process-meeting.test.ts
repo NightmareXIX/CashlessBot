@@ -8,6 +8,7 @@ import {
   NO_SPEECH_TEXT,
   NOTE_GAPS,
   NOTE_SUMMARY_FAILED,
+  NOTE_SUMMARY_STALE,
   processMeeting,
 } from '../../src/pipeline/process-meeting.js';
 import { buildErrorText } from '../../src/report/report-format.js';
@@ -68,6 +69,28 @@ const fakePoster = () => {
   } satisfies ReportPoster & Record<string, unknown>;
   return poster;
 };
+
+/**
+ * Simulates the process dying mid-run: `hang` never settles, and `untilCrash(run)`
+ * resolves once `hang` has been called, so everything saved before it is on disk.
+ * It fails fast if the run finishes without reaching the crash point.
+ */
+function crashPoint() {
+  let signal!: () => void;
+  const reached = new Promise<void>((resolve) => (signal = resolve));
+  const hang = (): Promise<never> => {
+    signal();
+    return new Promise<never>(() => {});
+  };
+  const untilCrash = (run: Promise<unknown>) =>
+    Promise.race([
+      reached,
+      run.then(() => {
+        throw new Error('run finished without reaching the crash point');
+      }),
+    ]);
+  return { hang, untilCrash };
+}
 
 const description = (messages: ReportMessage[]) =>
   messages.flatMap((m) => m.embeds.map((e) => e.description ?? '')).join('\n');
@@ -343,5 +366,93 @@ describe('processMeeting', () => {
     expect(description(poster.posts[1]!.messages)).toContain('The team planned the launch.');
     expect(result.steps.report).toBe('done');
     expect(result.reportComplete).toBe(true);
+  });
+
+  it('after a crash between filling a gap and posting, a restart still posts the corrected report', async () => {
+    const id = await recordMeeting();
+    const poster = fakePoster();
+    await processMeeting(
+      id,
+      deps({ poster, primary: transcriber('gemini', ['c0002']), fallback: transcriber('groq', ['c0002']) }),
+    );
+
+    // Retry fills the gap, then dies while summarizing.
+    const crash = crashPoint();
+    await crash.untilCrash(processMeeting(id, deps({ poster, summarizer: { name: 'gemini', summarize: crash.hang } })));
+    const saved = await store.load(id);
+    expect(saved.batches.map((b) => b.status)).toEqual(['done', 'done']);
+    expect(saved.steps.report).not.toBe('done');
+
+    // A fresh process (new store) resumes from meta.json alone.
+    const primary = transcriber('gemini');
+    const sum = summarizer('gemini');
+    const result = await processMeeting(id, {
+      ...deps({ poster, primary, summarizer: sum }),
+      store: new MeetingStore(root),
+    });
+
+    expect(primary.transcribe).not.toHaveBeenCalled();
+    expect(sum.summarize).toHaveBeenCalledOnce();
+    expect(poster.posts).toHaveLength(2);
+    expect(poster.posts[1]!.replyTo).toBe('msg-1');
+    expect(transcriptText(poster.posts[1]!.messages)).not.toContain('[untranscribed audio');
+    expect(result.steps).toEqual({ transcribe: 'done', summarize: 'done', report: 'done' });
+    expect(result.reportComplete).toBe(true);
+  });
+
+  it('after a crash between saving a retried summary and posting, a restart still posts the reply', async () => {
+    const id = await recordMeeting();
+    const poster = fakePoster();
+    await processMeeting(id, deps({ poster, summarizer: summarizer('gemini', false) }));
+
+    // Retry saves the summary, then dies while posting.
+    const crash = crashPoint();
+    await crash.untilCrash(processMeeting(id, { ...deps(), poster: { post: crash.hang, postText: crash.hang } }));
+    const saved = await store.load(id);
+    expect(saved.summary).toEqual(SUMMARY);
+    expect(saved.steps.report).not.toBe('done');
+
+    const sum = summarizer('gemini');
+    const result = await processMeeting(id, { ...deps({ poster, summarizer: sum }), store: new MeetingStore(root) });
+
+    expect(sum.summarize).not.toHaveBeenCalled();
+    expect(poster.posts).toHaveLength(2);
+    expect(poster.posts[1]!.replyTo).toBe('msg-1');
+    expect(description(poster.posts[1]!.messages)).toContain('The team planned the launch.');
+    expect(description(poster.posts[1]!.messages)).not.toContain(NOTE_SUMMARY_FAILED);
+    expect(result.steps).toEqual({ transcribe: 'done', summarize: 'done', report: 'done' });
+    expect(result.reportComplete).toBe(true);
+  });
+
+  it('flags a stale summary when re-summarizing after a filled gap fails, and refreshes it on retry', async () => {
+    const id = await recordMeeting();
+    const poster = fakePoster();
+    await processMeeting(
+      id,
+      deps({ poster, primary: transcriber('gemini', ['c0002']), fallback: transcriber('groq', ['c0002']) }),
+    );
+
+    const second = await processMeeting(id, deps({ poster, summarizer: summarizer('gemini', false) }));
+
+    expect(poster.posts).toHaveLength(2);
+    const reply = description(poster.posts[1]!.messages);
+    expect(reply).toContain(NOTE_SUMMARY_STALE);
+    expect(reply).not.toContain(NOTE_SUMMARY_FAILED);
+    expect(reply).not.toContain(NOTE_GAPS);
+    expect(second.summary).toEqual(SUMMARY);
+    expect(second.steps).toEqual({ transcribe: 'done', summarize: 'failed', report: 'done' });
+    expect(second.reportComplete).toBe(false);
+
+    const primary = transcriber('gemini');
+    const sum = summarizer('gemini');
+    const third = await processMeeting(id, deps({ poster, primary, summarizer: sum }));
+
+    expect(primary.transcribe).not.toHaveBeenCalled();
+    expect(sum.summarize).toHaveBeenCalledOnce();
+    expect(poster.posts).toHaveLength(3);
+    expect(poster.posts[2]!.replyTo).toBe('msg-1');
+    expect(description(poster.posts[2]!.messages)).not.toContain(NOTE_SUMMARY_STALE);
+    expect(third.steps).toEqual({ transcribe: 'done', summarize: 'done', report: 'done' });
+    expect(third.reportComplete).toBe(true);
   });
 });
